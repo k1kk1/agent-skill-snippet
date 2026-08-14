@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Recipes Rich Result Test"
+  short_description: "Return a structured result to verify every rich result block."
+  default_prompt: "Use $agent-recipes-rich-result-test to return the rich result fixture."
