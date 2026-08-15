@@ -103,28 +103,29 @@ open -a AgentRecipes --args --manage
 Clipboard も既定値も空で埋まらないときは、**フォームを出さずに「チャットに入力」に切り替える**
 （続きは LLM のチャットで書けばよい）。
 
-フォームが開くのは、Recipe を「実行時に Project を選ぶ / 送信先を毎回選ぶ」に設定したときと、
+フォームが開くのは、Recipe を「実行時に Project を選ぶ」に設定したときと、
 **⌥ + クリック**（引数・送信先・Preview を細かく調整したいとき）だけ。
 
 メニュー下部に Herdr の接続状態と Agent 数、応答待ちの Recipe を表示する。
 
 内部的には 実行 = `herdr agent prompt`、チャットに入力 = `herdr pane send-text` + `herdr agent focus`。
 
-### 実行するセッション
+### 送信先の選び方
 
-**既定は「毎回新しいセッション」**。Herdr に新しい tab を作り、Agent を起動してから実行するので、
-作業中の既存セッションに入力が混ざらない。Recipe ごとに変更できる:
+**既定は「新しいセッション」**。既存の作業に割り込まないよう、実行のたびに Agent を起動する。
+実行時に送信先を聞くことはしない。Recipe ごとに変更できる:
 
 | セッション | 動作 |
 | --- | --- |
-| **新しいセッション**（既定） | `AgentRecipes` space 内にtabを作成 → `herdr agent start` → 実行 |
-| 空いていれば再利用 | 同じ LLM の idle な Agent を使う（作業中は避ける）。無ければ新規 |
-| 毎回選ぶ | フォームで送信先を選ぶ |
+| **新しいセッション**（既定） | tab を作成 → `herdr agent start` → 実行 |
+| 空いていれば再利用 | 同じ LLM の idle / done な Agent を使う（作業中は避ける）。無ければ新規 |
 
 ⌥クリックのフォームや CLI の `--agent <pane-id>` で明示指定したときは、その送信先に送る。
 
-`AgentRecipes` space がまだ無い場合は最初の実行時に作成し、workspace作成時のroot paneを使用する。
-2回目以降は既存の同名spaceへ新しいtabを追加する。
+新しい Agent は Herdr workspace に作る。Recipe の「Herdr workspace」を「指定なし」にしていれば
+`AgentRecipes` space を使い、無ければ最初の実行時に作成する（workspace作成時のroot paneを使用）。
+「指定あり」にすると **workspace 名を自由入力**でき、同じ名前の space が無ければその名前で作成する。
+既存の名前は「既存から選ぶ」から入力できる。
 
 > 新しい Claude Code セッションは、初回のネットワーク取得などで許可を求めることがある。
 > その場合は Result に許可待ちの画面が出るので、Herdr 側で応答する。
@@ -141,7 +142,16 @@ Recipe 側には Agent 種別を持たせない（Skill を使うのが目的で
 
 「空いていれば再利用」にした Recipe では、割り込みにくい順（idle → done → unknown → blocked）で
 1 件を選ぶ。**作業中 (working) の Agent は使わず**、その場合は新しいセッションを立てる。
-Recipe に Project を設定してあると、cwd が一致する Agent だけを再利用対象にする。
+Recipe の「作業フォルダ」を設定してあると、cwd が一致する Agent だけを再利用対象にする。
+
+### workspace と作業フォルダ
+
+- **対象 workspace** は Herdr の workspace です。「空いていれば再利用」で指定すると、その workspace 内の空き Agent だけを候補にします。候補が無いときは、その workspace に新しい tab を作ります。
+- **ローカル作業フォルダ** は Agent の `cwd` です。Prompt の `{{project}}` / `{{cwd}}` にも使われ、workspace とは別の概念です。
+- Recipe に作業フォルダを設定していない場合は、Settings → General の **作業ディレクトリ（既定）** を使います。
+  既定は Skill 実行専用の空ディレクトリ **`~/.agentrecipes`**（無ければ自動作成）。ホーム直下や
+  `Application Support/AgentRecipes`（Recipe と設定の保存先）を cwd にすると、Agent から無関係なファイルや
+  アプリ自身のデータに手が届いてしまうため、既定では使いません。
 
 ## CLI
 
@@ -152,12 +162,20 @@ agentrecipes show <recipe>
 agentrecipes preview web-research --url https://example.com
 agentrecipes run review-diff --project ComposerSketch
 agentrecipes copy|paste|submit <recipe> [--<arg> <value> ...] [--agent <pane-id>]
+agentrecipes mcp [claude|codex|gemini] [--all]     # MCP の接続状況
 agentrecipes agents | panes | workspaces | status  # Herdr の状態と現在の LLM
 agentrecipes projects [--add ~/src/foo]
 agentrecipes history [--limit 20]
 ```
 
-送信先が確定しないときは候補を一覧表示して終了し、`--agent <pane-id>` で明示指定できる。
+Recipe の引数名が `mode` や `project` など CLI オプションの予約語と重なる場合は、
+`--arg name=value` を使います。未定義の引数名はエラーとして表示されます。
+
+```bash
+agentrecipes run example --arg mode=full
+```
+
+送信先は聞き返さずに決まる。特定の Agent に送りたいときだけ `--agent <pane-id>` を指定する。
 
 ## ファイル管理
 
@@ -207,6 +225,30 @@ CLI も同じで `--wait [--timeout <ms>]`。
 
 リッチ結果の JSON 契約と Skill 側の書き方は [docs/rich-results.md](docs/rich-results.md) を参照。
 
+## MCP の接続状況
+
+Skill が MCP のツールを使う場合、MCP が未接続だと実行が途中で止まってしまう。
+Settings → **MCP** で LLM ごとの接続状況を確認できる。
+
+一覧は **MCP ごとに 1 行**で、同じ MCP は LLM をまたいでまとめる。
+右側に LLM のアイコン（Claude Code ✦ / Codex {} / Gemini ◆）を並べ、**その MCP が使える LLM だけカラー**、
+未設定はグレー、接続失敗は警告アイコンになる。
+
+```
+chrome-devtools   npx -y chrome-devtools-mcp@latest      ✦ {} ◆
+```
+
+- `claude` / `gemini` は `mcp list` の health check の結果（接続済み / 接続失敗 / 承認待ち）を表示する
+- `codex` は接続確認に対応していないため、設定の有無（設定あり / 無効）だけを表示する
+- MCP の設定は cwd に依存するので、**Agent を起動するのと同じ作業ディレクトリ**でチェックする
+- 同じ一覧を**メニューバーのパネル下部**（Herdr の接続状態の下）にも出す。クリックで MCP タブが開く
+
+```bash
+agentrecipes mcp            # 現在の LLM
+agentrecipes mcp codex      # LLM を指定
+agentrecipes mcp --all      # すべて（接続失敗があれば exit 1）
+```
+
 ## Skill 一覧
 
 Settings → **Skills** で `~/.claude/skills` と `~/.codex/skills`（追加可）を走査し、
@@ -222,10 +264,26 @@ agentrecipes skills web --json               # 検索して JSON で
 agentrecipes skills --open web-page-research # SKILL.md をエディタで開く
 ```
 
+`Agent Recipes 用 Skill を作成` は、`agent-recipes-skill-creator` Skill を使い、
+入力・副作用・結果形式が Recipe の契約に合う Codex Skill を作成するための Recipe です。
+
+## Recipe と Agent Skill
+
+Recipe は Agent Skill とほぼ同じ「作業単位」で、Skill に Prompt・入力・実行設定を加えた実行プリセットです。
+フォーム入力、Clipboard の既定値、送信先、履歴、リッチ結果表示を Recipe 側で設定できます。Recipe Editor の
+**ベース Agent Skill** で `SKILL.md` を選ぶと、その Skill の基本動作に Recipe 固有の Prompt 設定を重ねて実行します。
+Skill 自体は標準の `SKILL.md` / `agents/openai.yaml` のままなので、Agent からも単独で利用できます。Recipe は Skill を生成・上書きしません。
+
+Skill に `agents/openai.yaml` の `interface.default_prompt`、または `SKILL.md` / `agents/openai.yaml` の
+`examples` があれば、Recipe Editor で既定 Prompt の取り込みや例の適用に使えます。取り込んだ後の編集内容は
+Recipe 側だけに保存され、元の Skill は変更しません。
+
 ## Settings
 
-使用する LLM（既定 Claude Code）/ Launch at Login / 通知 / 応答待ちと結果表示 / herdr のパス / Herdr 接続状態 /
-Skill Sources とエディタ / Recipe ディレクトリ / Debug logging / 履歴件数。
+使用する LLM（既定 Claude Code）/ Launch at Login / 通知 / 応答待ちと結果表示 / 作業ディレクトリ（既定）/
+herdr のパス / Herdr 接続状態 / MCP 接続状況 / Skill Sources とエディタ / Recipe ディレクトリ / Debug logging / 履歴件数。
+
+Manage Recipes 画面の右上の歯車からも開けます。
 
 メニューバーを使わずに開く場合:
 
@@ -287,7 +345,7 @@ cp -R skills/* ~/.codex/skills/
 
 対応する Recipe「動作確認」(`agent-recipes-check`) は、マーカー・送信日時・Project・cwd を
 埋めた Prompt を送り、Agent 側は受け取った内容と実際の `pwd` の一致を報告するだけ。
-既定は Submit ＋ Agent Only (codex) ＋ 新規作成なので、メニューから 1 クリックで確認できる。
+既定は 実行 (Submit) ＋ 新しいセッションなので、メニューから 1 クリックで確認できる。
 
 ```bash
 agentrecipes submit agent-recipes-check                       # 自動で送信先を決めて実行
@@ -311,7 +369,7 @@ swift test
 ```
 
 Template / 引数検証 / ファイル入出力 / Project / History / Herdr CLI のコマンド生成とエラー分類 /
-Target Resolver の全 Strategy と優先順位 / 新規 Agent 起動シーケンス / RecipeRunner の Copy・Paste・Submit をカバー。
+Target Resolver のセッション方針と優先順位 / 新規 Agent 起動シーケンス（workspace 名の作成・再利用を含む）/ RecipeRunner の Copy・Paste・Submit をカバー。
 Herdr は Fake Runner に差し替えているので、テスト実行で実際の Agent へ送信されることはない。
 
 ## 公開・ライセンス

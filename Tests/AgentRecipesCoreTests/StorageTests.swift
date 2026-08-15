@@ -41,7 +41,7 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("prompt.md").path))
 
         let json = try String(contentsOf: dir.appendingPathComponent("recipe.json"), encoding: .utf8)
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 3"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 5"))
         XCTAssertFalse(json.contains("調査してください"))
 
         let loaded = try repo.load(id: "web-research")
@@ -59,6 +59,17 @@ final class StorageTests: XCTestCase {
         let loaded = try repo.load(id: recipe.id)
         XCTAssertEqual(loaded.skill, SkillReference(name: "agent-recipes-rich-result-test", source: "codex"))
         XCTAssertEqual(loaded.resultFormat, .rich)
+    }
+
+    func testTargetWorkspaceRoundTrip() throws {
+        let recipe = Recipe(
+            id: "workspace", name: "Workspace",
+            target: TargetSpec(workspaceID: "w1", workspaceName: "AgentRecipes"), body: "本文"
+        )
+        let repo = RecipeRepository(layout: layout)
+        try repo.save(recipe)
+        XCTAssertEqual(try repo.load(id: recipe.id).target.workspaceID, "w1")
+        XCTAssertEqual(try repo.load(id: recipe.id).target.workspaceName, "AgentRecipes")
     }
 
     /// 旧スキーマ (projectAndAgent / agentOnly + target.agent) も読める。
@@ -96,6 +107,57 @@ final class StorageTests: XCTestCase {
     func testInvalidIDIsRejected() {
         let repo = RecipeRepository(layout: layout)
         XCTAssertThrowsError(try repo.save(Recipe(id: "../escape", name: "bad", body: "x")))
+    }
+
+    func testPromptFileCannotEscapeRecipeDirectory() throws {
+        let repo = RecipeRepository(layout: layout)
+        var recipe = Recipe(id: "bad-prompt", name: "Bad", body: "do not write")
+        recipe.prompt.file = "../outside.md"
+
+        XCTAssertThrowsError(try repo.save(recipe)) { error in
+            guard case .invalidPromptFile("../outside.md")? = error as? StorageError else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("outside.md").path))
+    }
+
+    func testInvalidPromptFileIsRejectedWhenLoadingExternalRecipe() throws {
+        let dir = layout.directory(for: "unsafe")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #"""
+        { "id": "unsafe", "name": "Unsafe", "prompt": { "file": "../../outside.md" } }
+        """#.write(to: dir.appendingPathComponent("recipe.json"), atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try RecipeRepository(layout: layout).load(id: "unsafe")) { error in
+            guard case .invalidPromptFile("../../outside.md")? = error as? StorageError else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testDuplicateAndBlankArgumentNamesAreRejected() {
+        let repo = RecipeRepository(layout: layout)
+        let duplicate = Recipe(
+            id: "duplicate-args", name: "Duplicate",
+            arguments: [ArgumentSpec(name: "url"), ArgumentSpec(name: "url")], body: "{{url}}"
+        )
+        let blank = Recipe(id: "blank-arg", name: "Blank", arguments: [ArgumentSpec(name: "  ")], body: "x")
+        XCTAssertThrowsError(try repo.save(duplicate))
+        XCTAssertThrowsError(try repo.save(blank))
+    }
+
+    func testLegacyArgumentGetsStableIDWhenDecoded() throws {
+        let dir = layout.directory(for: "legacy-argument")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try #"""
+        { "id": "legacy-argument", "name": "Legacy", "arguments": [{ "name": "url" }] }
+        """#.write(to: dir.appendingPathComponent("recipe.json"), atomically: true, encoding: .utf8)
+        try "{{url}}".write(to: dir.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
+
+        let loaded = try RecipeRepository(layout: layout).load(id: "legacy-argument")
+        XCTAssertEqual(loaded.arguments.count, 1)
+        XCTAssertNotEqual(loaded.arguments[0].id, UUID())
     }
 
     func testLoadAllSkipsUnrelatedFiles() throws {
@@ -214,6 +276,26 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(found.first?.path.hasSuffix("SKILL.md") == true)
         XCTAssertTrue(found.first?.matches("research") == true)
         XCTAssertFalse(found.first?.matches("音楽") == true)
+    }
+
+    func testSkillScannerReadsDefaultPromptAndExamples() throws {
+        let dir = root.appendingPathComponent("skills/sample")
+        let metadata = dir.appendingPathComponent("agents/openai.yaml")
+        try FileManager.default.createDirectory(at: metadata.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "---\nname: sample\n---\n# Sample".write(
+            to: dir.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8
+        )
+        try """
+        interface:
+          default_prompt: "Use $sample to summarize the current project."
+          examples:
+            - "Summarize this URL"
+            - "List the main risks"
+        """.write(to: metadata, atomically: true, encoding: .utf8)
+
+        let found = SkillScanner().scan(sources: [SkillSource(name: "codex", path: root.appendingPathComponent("skills").path)])
+        XCTAssertEqual(found.first?.defaultPrompt, "Use $sample to summarize the current project.")
+        XCTAssertEqual(found.first?.examples, ["Summarize this URL", "List the main risks"])
     }
 
     func testSkillScannerFallsBackToDirectoryName() throws {

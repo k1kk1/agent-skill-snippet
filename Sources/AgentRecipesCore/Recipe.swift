@@ -14,9 +14,20 @@ public enum ArgumentType: String, Codable, CaseIterable, Sendable {
         case .url: return "URL"
         }
     }
+
+    /// UI で入力形式を直感的に示す SF Symbol。
+    public var symbolName: String {
+        switch self {
+        case .url: return "link"
+        case .string: return "text.cursor"
+        case .multiline: return "text.alignleft"
+        }
+    }
 }
 
 public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
+    /// 編集中も変わらない行の識別子。name はユーザーが編集できるため ID には使わない。
+    public var id: UUID
     public var name: String
     public var label: String?
     public var type: ArgumentType
@@ -25,10 +36,10 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
     /// 未入力時に clipboard を既定値として使う。
     public var useClipboardAsDefault: Bool
 
-    public var id: String { name }
     public var displayLabel: String { label ?? name }
 
     public init(
+        id: UUID = UUID(),
         name: String,
         label: String? = nil,
         type: ArgumentType = .string,
@@ -36,6 +47,7 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         defaultValue: String? = nil,
         useClipboardAsDefault: Bool = false
     ) {
+        self.id = id
         self.name = name
         self.label = label
         self.type = type
@@ -45,11 +57,13 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, label, type, required, defaultValue, useClipboardAsDefault
+        case id, name, label, type, required, defaultValue, useClipboardAsDefault
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        // schema 3 までの Recipe には id が無いため、読み込み時に 1 度だけ採番する。
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try c.decode(String.self, forKey: .name)
         label = try c.decodeIfPresent(String.self, forKey: .label)
         type = try c.decodeIfPresent(ArgumentType.self, forKey: .type) ?? .string
@@ -70,9 +84,26 @@ public enum ExecutionMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .copy: return "コピー"
+        case .copy: return "Prompt をコピー"
         case .paste: return "チャットに入力"
         case .submit: return "実行"
+        }
+    }
+
+    /// Recipe エディタで使う、操作対象が分かる名称とアイコン。
+    public var editorDisplayName: String {
+        switch self {
+        case .copy: return "Prompt をコピー"
+        case .paste: return "チャットに入力"
+        case .submit: return "実行"
+        }
+    }
+
+    public var editorIcon: String {
+        switch self {
+        case .copy: return "doc.on.doc"
+        case .paste: return "text.cursor"
+        case .submit: return "play.fill"
         }
     }
 
@@ -89,29 +120,25 @@ public enum ExecutionMode: String, Codable, CaseIterable, Sendable {
     public var requiresHerdr: Bool { self != .copy }
 }
 
-/// どのセッションで実行するか。
-/// 既定は「毎回新しいセッション」。既存の作業中セッションに割り込まないため。
+/// どの Agent を送信先にするか。
+/// 既定は「空いていれば再利用」。作業中の Agent には割り込まず、無ければ新規に起動する。
 public enum SessionPolicy: String, Codable, CaseIterable, Sendable {
     /// Herdr に新しい tab を作り、Agent を起動して実行する。
     case newSession
     /// 空いている既存 Agent があれば使い、無ければ新規に立てる。
     case reuseIfAvailable
-    /// 実行時に送信先を選ぶ。
-    case ask
 
     public var displayName: String {
         switch self {
         case .newSession: return "新しいセッション"
         case .reuseIfAvailable: return "空いていれば再利用"
-        case .ask: return "毎回選ぶ"
         }
     }
 
     public var explanation: String {
         switch self {
-        case .newSession: return "毎回新しい Agent を起動する。既存の作業に混ざらない"
-        case .reuseIfAvailable: return "空いている同じ LLM の Agent を再利用する。無ければ新規"
-        case .ask: return "フォームで送信先を選ぶ"
+        case .newSession: return "毎回新しい Agent を起動する。既存の作業とは分けて実行する"
+        case .reuseIfAvailable: return "同じ LLM の空き Agent を再利用する。無ければ新しい Agent を起動する"
         }
     }
 }
@@ -120,21 +147,29 @@ public struct TargetSpec: Codable, Hashable, Sendable {
     public var session: SessionPolicy
     /// projects.json の Project id。新しいセッションの作業ディレクトリにも使う。
     public var projectID: String?
+    /// Herdr workspace id。指定時はその workspace の Agent だけを再利用候補にする。
+    public var workspaceID: String?
+    /// Herdr workspace の名前。まだ存在しない名前なら、実行時にその名前で作る。
+    public var workspaceName: String?
     /// 実行時に Project を選ぶ。
     public var askProject: Bool
 
     public init(
         session: SessionPolicy = .newSession,
         projectID: String? = nil,
+        workspaceID: String? = nil,
+        workspaceName: String? = nil,
         askProject: Bool = false
     ) {
         self.session = session
         self.projectID = projectID
+        self.workspaceID = workspaceID
+        self.workspaceName = workspaceName
         self.askProject = askProject
     }
 
     private enum CodingKeys: String, CodingKey {
-        case session, projectID, askProject
+        case session, projectID, workspaceID, workspaceName, askProject
         // 旧スキーマ
         case strategy
     }
@@ -142,20 +177,20 @@ public struct TargetSpec: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projectID = try c.decodeIfPresent(String.self, forKey: .projectID)
+        workspaceID = try c.decodeIfPresent(String.self, forKey: .workspaceID)
+        workspaceName = try c.decodeIfPresent(String.self, forKey: .workspaceName)
         askProject = try c.decodeIfPresent(Bool.self, forKey: .askProject) ?? false
-        if let session = try c.decodeIfPresent(SessionPolicy.self, forKey: .session) {
-            self.session = session
-        } else {
-            // 旧 strategy からの読み替え。既存セッションを使う設定は新規セッションに寄せる。
-            let legacy = try c.decodeIfPresent(String.self, forKey: .strategy)
-            self.session = (legacy == "ask") ? .ask : .newSession
-        }
+        // 旧スキーマ (strategy) と、廃止した "ask" は「新しいセッション」に寄せる。
+        let raw = try c.decodeIfPresent(String.self, forKey: .session)
+        self.session = raw.flatMap(SessionPolicy.init(rawValue:)) ?? .newSession
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(session, forKey: .session)
         try c.encodeIfPresent(projectID, forKey: .projectID)
+        try c.encodeIfPresent(workspaceID, forKey: .workspaceID)
+        try c.encodeIfPresent(workspaceName, forKey: .workspaceName)
         try c.encode(askProject, forKey: .askProject)
     }
 }
@@ -208,7 +243,7 @@ public enum ResultFormat: String, Codable, CaseIterable, Hashable, Sendable {
 
 /// ユーザーが選ぶ単位。Skill そのものではなく「やりたい作業」。
 public struct Recipe: Codable, Identifiable, Hashable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 5
 
     public var schemaVersion: Int
     public var id: String
@@ -223,6 +258,8 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
     /// rich指定時は構造化結果の出力契約をPromptに追加する。
     public var resultFormat: ResultFormat
     public var arguments: [ArgumentSpec]
+    /// Skill が任意の補足プロンプトを受け付けるか。明示的な引数とは別の、任意の文脈・指示用。
+    public var acceptsAdditionalPrompt: Bool
     public var mode: ExecutionMode
     public var target: TargetSpec
 
@@ -240,6 +277,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         skill: SkillReference? = nil,
         resultFormat: ResultFormat = .plain,
         arguments: [ArgumentSpec] = [],
+        acceptsAdditionalPrompt: Bool = false,
         mode: ExecutionMode = .submit,
         target: TargetSpec = TargetSpec(),
         body: String = ""
@@ -255,6 +293,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         self.skill = skill
         self.resultFormat = resultFormat
         self.arguments = arguments
+        self.acceptsAdditionalPrompt = acceptsAdditionalPrompt
         self.mode = mode
         self.target = target
         self.body = body
@@ -262,7 +301,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, description, category, tags, favorite
-        case prompt, skill, resultFormat, arguments, mode, target
+        case prompt, skill, resultFormat, arguments, acceptsAdditionalPrompt, mode, target
     }
 
     public init(from decoder: Decoder) throws {
@@ -278,6 +317,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         skill = try c.decodeIfPresent(SkillReference.self, forKey: .skill)
         resultFormat = try c.decodeIfPresent(ResultFormat.self, forKey: .resultFormat) ?? .plain
         arguments = try c.decodeIfPresent([ArgumentSpec].self, forKey: .arguments) ?? []
+        acceptsAdditionalPrompt = try c.decodeIfPresent(Bool.self, forKey: .acceptsAdditionalPrompt) ?? false
         mode = try c.decodeIfPresent(ExecutionMode.self, forKey: .mode) ?? .submit
         target = try c.decodeIfPresent(TargetSpec.self, forKey: .target) ?? TargetSpec()
         body = ""
@@ -295,7 +335,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
             if let d = arg.defaultValue, !d.isEmpty { return false }
             return true
         }
-        return needsArgument || target.askProject || target.session == .ask
+        return needsArgument || target.askProject
     }
 
     public func matches(_ query: String) -> Bool {

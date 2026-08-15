@@ -46,19 +46,24 @@ public struct VariableResolver: Sendable {
     }
 
     /// 送信先として解決された Project を踏まえて値を作る。
-    public func values(project: Project?) -> [String: String] {
+    public func values(project: Project?, includeClipboard: Bool = true) -> [String: String] {
         let date = DateFormatter()
+        date.locale = Locale(identifier: "en_US_POSIX")
+        date.calendar = Calendar(identifier: .gregorian)
         date.dateFormat = "yyyy-MM-dd"
         let time = DateFormatter()
+        time.locale = Locale(identifier: "en_US_POSIX")
+        time.calendar = Calendar(identifier: .gregorian)
         time.dateFormat = "HH:mm"
         let stamp = now()
 
-        return [
-            "clipboard": clipboard.read(),
+        var values = [
             "date": date.string(from: stamp),
             "time": time.string(from: stamp),
             "project": project?.name ?? "",
             "cwd": project?.expandedPath ?? "",
         ]
+        if includeClipboard { values["clipboard"] = clipboard.read() }
+        return values
     }
 }

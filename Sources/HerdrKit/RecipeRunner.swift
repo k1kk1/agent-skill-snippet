@@ -4,8 +4,6 @@ import AgentRecipesCore
 public enum RunOutcome: Sendable {
     /// 送信 (またはコピー) まで完了した。
     case completed(RunReceipt)
-    /// 送信先が決まらなかった。UI で選ばせる。
-    case needsTarget(prompt: String, candidates: [HerdrAgent], reason: TargetResolution.AskReason)
 }
 
 public struct RunReceipt: Hashable, Sendable {
@@ -42,14 +40,18 @@ public struct RecipeRunner: Sendable {
     private let history: HistoryRepository?
     /// 送信先の LLM。アプリ設定から渡す。
     private let agentKind: AgentKind
+    /// Recipe に作業フォルダが無いときの cwd。nil なら herdr の既定に任せる。
+    private let defaultWorkingDirectory: String?
 
     public init(
         client: HerdrClient,
         agentKind: AgentKind = .claude,
+        defaultWorkingDirectory: String? = nil,
         clipboard: ClipboardAccess = SystemClipboard(),
         history: HistoryRepository? = nil
     ) {
         self.agentKind = agentKind
+        self.defaultWorkingDirectory = defaultWorkingDirectory
         self.client = client
         self.builder = PromptBuilder(clipboard: clipboard)
         self.targetResolver = TargetResolver()
@@ -62,13 +64,19 @@ public struct RecipeRunner: Sendable {
         recipe: Recipe,
         values: [String: String],
         project: Project?,
+        additionalPrompt: String = "",
         modeOverride: ExecutionMode? = nil,
         waitTimeoutMS: Int? = nil
     ) throws -> RunOutcome {
         let mode = modeOverride ?? recipe.mode
         let prompt: String
         do {
-            prompt = try builder.build(recipe: recipe, userValues: values, project: project)
+            prompt = try builder.build(
+                recipe: recipe,
+                userValues: values,
+                project: project,
+                additionalPrompt: additionalPrompt
+            )
         } catch {
             record(recipe: recipe, mode: mode, project: project, agent: nil, result: .failure, message: error.localizedDescription)
             throw error
@@ -94,16 +102,18 @@ public struct RecipeRunner: Sendable {
                 ))
 
             case .startNew(let kind, let newAgentProject):
-                let agent = try startAgent(kind: kind, project: newAgentProject)
+                let agent = try startAgent(
+                    kind: kind,
+                    project: newAgentProject,
+                    workspaceID: recipe.target.workspaceID,
+                    workspaceName: recipe.target.workspaceName
+                )
                 var receipt = try send(
                     prompt: prompt, recipe: recipe, mode: mode, agent: agent,
                     project: project, waitTimeoutMS: waitTimeoutMS
                 )
                 receipt.startedNewAgent = true
                 return .completed(receipt)
-
-            case .ask(let candidates, let reason):
-                return .needsTarget(prompt: prompt, candidates: candidates, reason: reason)
             }
         } catch {
             record(recipe: recipe, mode: mode, project: project, agent: nil, result: .failure, message: error.localizedDescription)
@@ -143,18 +153,27 @@ public struct RecipeRunner: Sendable {
     }
 
     /// 新しい tab を作って Agent を起動し、受け付けられる状態まで待つ。
-    private func startAgent(kind: String, project: Project?) throws -> HerdrAgent {
-        let cwd = project?.expandedPath
+    private func startAgent(
+        kind: String,
+        project: Project?,
+        workspaceID: String?,
+        workspaceName: String?
+    ) throws -> HerdrAgent {
+        let cwd = project?.expandedPath ?? defaultWorkingDirectory
         let label = project?.name ?? kind
-        let workspace = try client.listWorkspaces().first {
-            $0.label?.caseInsensitiveCompare(Self.defaultWorkspaceLabel) == .orderedSame
-        }
+        let workspaces = try client.listWorkspaces()
+        // 指定が無ければ AgentRecipes 用の workspace にまとめる。
+        let wantedName = workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetName = (wantedName?.isEmpty == false) ? wantedName! : Self.defaultWorkspaceLabel
+        let workspace = workspaces.first { $0.id == workspaceID }
+            ?? workspaces.first { $0.label?.caseInsensitiveCompare(targetName) == .orderedSame }
         let pane: HerdrPane
         if let workspace {
             pane = try client.createTab(cwd: cwd, label: label, workspaceID: workspace.id)
         } else {
+            // 指定された名前の workspace がまだ無いので作る。
             // workspace create は最初の tab / pane も同時に作るため、そのpaneを直接使う。
-            pane = try client.createWorkspace(cwd: cwd, label: Self.defaultWorkspaceLabel)
+            pane = try client.createWorkspace(cwd: cwd, label: targetName)
         }
         // Herdr の Agent 名は workspace 全体で一意である必要がある。
         // 新規作成した pane id を含めれば、同じ Recipe の連続実行でも衝突しない。
@@ -184,12 +203,22 @@ public struct RecipeRunner: Sendable {
     }
 
     /// 送信先を自分で選んでから送る場合に使う Prompt 生成。
-    public func buildPrompt(recipe: Recipe, values: [String: String], project: Project?) throws -> String {
-        try builder.build(recipe: recipe, userValues: values, project: project)
+    public func buildPrompt(
+        recipe: Recipe,
+        values: [String: String],
+        project: Project?,
+        additionalPrompt: String = ""
+    ) throws -> String {
+        try builder.build(recipe: recipe, userValues: values, project: project, additionalPrompt: additionalPrompt)
     }
 
-    public func preview(recipe: Recipe, values: [String: String], project: Project?) -> String {
-        builder.preview(recipe: recipe, userValues: values, project: project)
+    public func preview(
+        recipe: Recipe,
+        values: [String: String],
+        project: Project?,
+        additionalPrompt: String = ""
+    ) -> String {
+        builder.preview(recipe: recipe, userValues: values, project: project, additionalPrompt: additionalPrompt)
     }
 
     public func initialValues(for recipe: Recipe) -> [String: String] {

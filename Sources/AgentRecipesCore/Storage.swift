@@ -61,12 +61,17 @@ public enum StorageError: LocalizedError {
     case recipeNotFound(String)
     case duplicateRecipe(String)
     case invalidRecipeID(String)
+    case invalidPromptFile(String)
+    case invalidArgumentNames([String])
 
     public var errorDescription: String? {
         switch self {
         case .recipeNotFound(let id): return "Recipe '\(id)' が見つかりません"
         case .duplicateRecipe(let id): return "Recipe '\(id)' は既に存在します"
         case .invalidRecipeID(let id): return "Recipe id '\(id)' は使用できません"
+        case .invalidPromptFile(let file): return "Prompt file '\(file)' は使用できません"
+        case .invalidArgumentNames(let names):
+            return "引数名は空白・重複なしで指定してください: \(names.joined(separator: ", "))"
         }
     }
 }
@@ -96,6 +101,7 @@ public final class RecipeRepository: @unchecked Sendable {
     }
 
     public func load(id: String) throws -> Recipe {
+        guard isValidID(id) else { throw StorageError.invalidRecipeID(id) }
         let dir = layout.directory(for: id)
         guard fm.fileExists(atPath: dir.appendingPathComponent("recipe.json").path) else {
             throw StorageError.recipeNotFound(id)
@@ -109,6 +115,7 @@ public final class RecipeRepository: @unchecked Sendable {
         // ディレクトリ名を正とする。手でコピーされた Recipe でも壊れないように。
         recipe.id = directory.lastPathComponent
         let file = recipe.prompt.file ?? "prompt.md"
+        guard isValidPromptFile(file) else { throw StorageError.invalidPromptFile(file) }
         if let text = try? String(contentsOf: directory.appendingPathComponent(file), encoding: .utf8) {
             recipe.body = text
         } else {
@@ -121,12 +128,15 @@ public final class RecipeRepository: @unchecked Sendable {
     public func save(_ recipe: Recipe) throws -> Recipe {
         var recipe = recipe
         guard isValidID(recipe.id) else { throw StorageError.invalidRecipeID(recipe.id) }
+        let invalidNames = invalidArgumentNames(recipe.arguments)
+        guard invalidNames.isEmpty else { throw StorageError.invalidArgumentNames(invalidNames) }
         recipe.schemaVersion = Recipe.currentSchemaVersion
 
         let dir = layout.directory(for: recipe.id)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let file = recipe.prompt.file ?? "prompt.md"
+        guard isValidPromptFile(file) else { throw StorageError.invalidPromptFile(file) }
         recipe.prompt = PromptSpec(file: file, text: nil)
         try recipe.body.write(to: dir.appendingPathComponent(file), atomically: true, encoding: .utf8)
 
@@ -136,12 +146,14 @@ public final class RecipeRepository: @unchecked Sendable {
     }
 
     public func delete(id: String) throws {
+        guard isValidID(id) else { throw StorageError.invalidRecipeID(id) }
         let dir = layout.directory(for: id)
         guard fm.fileExists(atPath: dir.path) else { throw StorageError.recipeNotFound(id) }
         try fm.removeItem(at: dir)
     }
 
     public func rename(id: String, to newID: String) throws {
+        guard isValidID(id) else { throw StorageError.invalidRecipeID(id) }
         guard isValidID(newID) else { throw StorageError.invalidRecipeID(newID) }
         guard id != newID else { return }
         let src = layout.directory(for: id)
@@ -168,6 +180,23 @@ public final class RecipeRepository: @unchecked Sendable {
         guard !id.isEmpty, id != ".", id != ".." else { return false }
         guard !id.contains("/"), !id.hasPrefix(".") else { return false }
         return true
+    }
+
+    /// Prompt は Recipe ディレクトリ直下の 1 ファイルだけに限定する。
+    /// 外部 Recipe の recipe.json によるディレクトリ外の読み書きを防ぐ。
+    private func isValidPromptFile(_ file: String) -> Bool {
+        guard !file.isEmpty, file != ".", file != ".." else { return false }
+        guard !file.contains("/"), !file.contains("\\"), !file.contains("..") else { return false }
+        return URL(fileURLWithPath: file).lastPathComponent == file
+    }
+
+    private func invalidArgumentNames(_ arguments: [ArgumentSpec]) -> [String] {
+        let names = arguments.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let empty = names.filter(\.isEmpty)
+        let duplicate = Dictionary(grouping: names.filter { !$0.isEmpty }, by: { $0 })
+            .filter { $0.value.count > 1 }
+            .map(\.key)
+        return Array(Set(empty.map { $0.isEmpty ? "(空欄)" : $0 } + duplicate)).sorted()
     }
 }
 

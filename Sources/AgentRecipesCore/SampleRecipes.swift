@@ -4,7 +4,7 @@ import Foundation
 /// 引数なし / 引数あり / Clipboard 利用 / リッチ結果 のパターン。
 public enum SampleRecipes {
     public static var all: [Recipe] {
-        [reviewDiff, webResearch, clipboardReview, richResultTest]
+        [reviewDiff, webResearch, clipboardReview, richResultTest, skillCreator]
     }
 
     /// 引数なし。選ぶと即送信される。
@@ -82,6 +82,33 @@ public enum SampleRecipes {
             target: TargetSpec(session: .newSession),
             body: """
             リッチ表示用のテスト結果を返してください。
+            """
+        )
+    }
+
+    /// Agent Recipes の入出力契約に沿った Codex Skill を作成・更新する。
+    public static var skillCreator: Recipe {
+        Recipe(
+            id: "create-agent-recipes-skill",
+            name: "Agent Recipes 用 Skill を作成",
+            description: "Recipe の入力・出力契約に沿った Codex Skill を作成または更新する",
+            category: "Development",
+            tags: ["skill", "agent-recipes", "codex"],
+            skill: SkillReference(name: "agent-recipes-skill-creator", source: "codex"),
+            arguments: [
+                ArgumentSpec(
+                    name: "requirement",
+                    label: "作りたい Skill の要件",
+                    type: .multiline,
+                    required: true
+                ),
+            ],
+            mode: .submit,
+            target: TargetSpec(session: .newSession),
+            body: """
+            以下の要件に沿って、Agent Recipes から呼び出す Codex Skill を作成または更新してください。
+
+            {{requirement}}
             """
         )
     }

@@ -1,10 +1,14 @@
 import Foundation
 
 /// 検出された Agent Skill。
-/// Recipe とは別概念で、Prompt 本文から「どの Skill を使わせるか」を書くときの参照に使う。
+/// Recipe はこの Skill をベースに、Prompt・入力・実行設定を持つ実行プリセットとして扱える。
 public struct DiscoveredSkill: Hashable, Identifiable, Sendable {
     public var name: String
     public var description: String?
+    /// Skill 側が提案する、最初に使う Prompt。`agents/openai.yaml` の default_prompt を優先する。
+    public var defaultPrompt: String?
+    /// Skill 側が提示する Prompt の利用例。Recipe 作成時の初期値候補に使う。
+    public var examples: [String]
     /// どの Source（Agent 種別）で見つかったか。"claude" / "codex" など。
     public var source: String
     /// SKILL.md の絶対パス。
@@ -14,9 +18,18 @@ public struct DiscoveredSkill: Hashable, Identifiable, Sendable {
 
     public var directory: String { (path as NSString).deletingLastPathComponent }
 
-    public init(name: String, description: String? = nil, source: String, path: String) {
+    public init(
+        name: String,
+        description: String? = nil,
+        defaultPrompt: String? = nil,
+        examples: [String] = [],
+        source: String,
+        path: String
+    ) {
         self.name = name
         self.description = description
+        self.defaultPrompt = defaultPrompt
+        self.examples = examples
         self.source = source
         self.path = path
     }
@@ -24,8 +37,9 @@ public struct DiscoveredSkill: Hashable, Identifiable, Sendable {
     public func matches(_ query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return true }
-        let joined = [name, description ?? "", source, path].joined(separator: " ").lowercased()
-        return q.split(separator: " ").allSatisfy { joined.contains($0) }
+        let joined = [name, description ?? "", defaultPrompt ?? ""] + examples + [source, path]
+        let haystack = joined.joined(separator: " ").lowercased()
+        return q.split(separator: " ").allSatisfy { haystack.contains($0) }
     }
 }
 
@@ -88,9 +102,14 @@ public struct SkillScanner: Sendable {
                 .first(where: { fm.fileExists(atPath: $0.path) }) else { return nil }
 
             let text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+            let metadataFile = entry.appendingPathComponent("agents/openai.yaml")
+            let metadata = (try? String(contentsOf: metadataFile, encoding: .utf8)) ?? ""
             return DiscoveredSkill(
                 name: frontMatterValue("name", in: text) ?? entry.lastPathComponent,
                 description: frontMatterValue("description", in: text),
+                defaultPrompt: yamlValue("default_prompt", in: metadata)
+                    ?? frontMatterValue("default_prompt", in: text),
+                examples: yamlList("examples", in: metadata) + yamlList("examples", in: text),
                 source: source.name,
                 path: file.path
             )
@@ -113,6 +132,44 @@ public struct SkillScanner: Sendable {
             return value.isEmpty ? nil : value
         }
         return nil
+    }
+
+    /// `agents/openai.yaml` と front matter の単純な scalar を読む。
+    private func yamlValue(_ key: String, in text: String) -> String? {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("\(key):") else { continue }
+            return unquote(String(trimmed.dropFirst(key.count + 1)).trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
+    /// `examples:` 配下の `- value` だけを扱う軽量な YAML list parser。
+    private func yamlList(_ key: String, in text: String) -> [String] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let start = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("\(key):")
+        }), start + 1 < lines.endIndex else { return [] }
+
+        var values: [String] = []
+        for line in lines[(start + 1)...] {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("-") else {
+                if !trimmed.isEmpty { break }
+                continue
+            }
+            let value = unquote(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
+            if !value.isEmpty { values.append(value) }
+        }
+        return values
+    }
+
+    private func unquote(_ value: String) -> String {
+        guard value.count >= 2,
+              let first = value.first,
+              (first == "\"" || first == "'"),
+              value.last == first else { return value }
+        return String(value.dropFirst().dropLast())
     }
 }
 

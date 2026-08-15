@@ -39,7 +39,10 @@ struct MenuBarView: View {
         .frame(width: 330)
         .onAppear {
             model.reload()
+            model.refreshClipboardSnapshot()
             model.refreshHerdr()
+            // 直近の結果が無いときだけ調べる (health check に数秒かかるため)。
+            if model.mcp.isEmpty { model.refreshMCP() }
             searchFocused = true
         }
     }
@@ -136,14 +139,49 @@ struct MenuBarView: View {
             if !model.pendingResults.isEmpty {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("応答待ち: \(model.pendingResults.joined(separator: ", "))")
+                    Text("応答待ち: \(model.pendingResults.map(\.recipeName).joined(separator: ", "))")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(.horizontal, 12)
             }
             statusLine
+            mcpStatus
         }
         .padding(.vertical, 6)
+    }
+
+    /// MCP が使えないと Skill の実行が途中で止まるので、接続状態をここで見せる。
+    /// 行は MCP ごと。使える LLM のアイコンだけカラーになる。
+    @ViewBuilder
+    private var mcpStatus: some View {
+        let groups = MCPInspection.grouped(AgentKind.allCases.compactMap { model.mcp[$0] })
+        if !groups.isEmpty || !model.mcpChecking.isEmpty {
+            Button {
+                dismiss()
+                PanelPresenter.shared.showSettings(model: model, tab: .mcp)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("MCP").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        if !model.mcpChecking.isEmpty {
+                            ProgressView().controlSize(.small)
+                        }
+                        Spacer(minLength: 0)
+                        if model.currentMCPFailures.isEmpty == false {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
+                    ForEach(groups) { group in
+                        MCPGroupRow(group: group, compact: true)
+                    }
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal, 12)
+            }
+            .buttonStyle(.plain)
+            .help("Settings の MCP タブを開く")
+        }
     }
 
     private var statusLine: some View {
@@ -221,11 +259,15 @@ struct RecipeRow: View {
                 Image(systemName: icon)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
-                Text(recipe.name).lineLimit(1)
-                Spacer(minLength: 0)
+                Text(recipe.name)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                RecipeInputBadges(recipe: recipe, compact: true)
+                    .frame(width: 80, alignment: .trailing)
                 Text(effectiveMode.displayName)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .frame(width: 58, alignment: .trailing)
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)

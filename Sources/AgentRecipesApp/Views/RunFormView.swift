@@ -7,6 +7,7 @@ struct RunFormView: View {
     @ObservedObject var model: AppModel
 
     @State private var values: [String: String] = [:]
+    @State private var additionalPrompt: String = ""
     @State private var projectID: String = ""
     @State private var selectedAgentID: String = ""
     @State private var loadedRequestID: UUID?
@@ -25,6 +26,7 @@ struct RunFormView: View {
         }
         .onChange(of: model.runRequest?.id) { _, _ in loadIfNeeded() }
         .onAppear {
+            model.refreshClipboardSnapshot()
             loadIfNeeded()
             model.refreshHerdr()
         }
@@ -48,6 +50,8 @@ struct RunFormView: View {
                     .background(Color.secondary.opacity(0.12), in: Capsule())
             }
 
+            RecipeInputBadges(recipe: recipe)
+
             if !recipe.arguments.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("入力")
@@ -68,18 +72,28 @@ struct RunFormView: View {
                     .frame(maxHeight: 170)
                 }
             } else {
-                Label("追加の入力なしで実行できます", systemImage: "checkmark.circle")
+                Label(
+                    recipe.acceptsAdditionalPrompt ? "補足プロンプトなしで実行できます" : "追加の入力なしで実行できます",
+                    systemImage: "checkmark.circle"
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if let reason = model.runRequest?.reason {
-                Label(TargetPrompt.describe(reason), systemImage: "exclamationmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+            if recipe.acceptsAdditionalPrompt {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("補足プロンプト（任意）").font(.headline)
+                    Text("Skill が許可する範囲の追加条件・背景情報を渡せます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $additionalPrompt)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(height: 70)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
+                }
             }
 
-            if recipe.target.askProject || !model.projects.isEmpty {
+            if recipe.target.askProject {
                 projectPicker
             }
 
@@ -107,9 +121,14 @@ struct RunFormView: View {
 
     /// 仕様の "Send to..."。自動解決に任せるか、明示的に Agent を選ぶ。
     private func targetPicker(_ recipe: Recipe) -> some View {
-        let candidates = model.runRequest?.candidates.isEmpty == false
+        let allCandidates = model.runRequest?.candidates.isEmpty == false
             ? model.runRequest!.candidates
             : model.candidates(for: recipe, project: selectedProject)
+        let candidates = if let workspaceID = recipe.target.workspaceID {
+            allCandidates.filter { $0.workspaceID == workspaceID }
+        } else {
+            allCandidates
+        }
 
         return VStack(alignment: .leading, spacing: 4) {
             LabeledContent("Send to") {
@@ -136,7 +155,6 @@ struct RunFormView: View {
         switch recipe.target.session {
         case .newSession: return "新しい \(agent) セッション"
         case .reuseIfAvailable: return "自動 (空いている \(agent))"
-        case .ask: return "選択してください"
         }
     }
 
@@ -144,7 +162,12 @@ struct RunFormView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Prompt Preview").font(.caption).foregroundStyle(.secondary)
             ScrollView {
-                Text(model.preview(recipe: recipe, values: values, project: selectedProject))
+                Text(model.preview(
+                    recipe: recipe,
+                    values: values,
+                    project: selectedProject,
+                    additionalPrompt: additionalPrompt
+                ))
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,13 +196,13 @@ struct RunFormView: View {
             }
             .buttonStyle(.bordered)
             .tint(recipe.mode == .paste ? .accentColor : .secondary)
-                .disabled(!canSendToHerdr)
+                .disabled(!canSendToHerdr(recipe))
             Button { run(recipe, mode: .submit) } label: {
                 Label("実行", systemImage: "paperplane.fill")
             }
             .buttonStyle(.bordered)
             .tint(recipe.mode == .submit ? .accentColor : .secondary)
-                .disabled(!canSendToHerdr)
+                .disabled(!canSendToHerdr(recipe))
         }
     }
 
@@ -192,7 +215,7 @@ struct RunFormView: View {
     }
 
     /// Herdr が使えないときは Copy だけ許す。
-    private var canSendToHerdr: Bool {
+    private func canSendToHerdr(_ recipe: Recipe) -> Bool {
         model.connection.isHealthy
     }
 
@@ -213,7 +236,8 @@ struct RunFormView: View {
             values: values.filter { !$0.value.isEmpty },
             project: selectedProject,
             mode: mode,
-            agent: mode == .copy ? nil : selectedAgent
+            agent: mode == .copy ? nil : selectedAgent,
+            additionalPrompt: additionalPrompt
         )
     }
 
@@ -221,6 +245,7 @@ struct RunFormView: View {
         guard let request = model.runRequest, loadedRequestID != request.id else { return }
         loadedRequestID = request.id
         values = request.values.isEmpty ? model.initialValues(for: request.recipe) : request.values
+        additionalPrompt = request.additionalPrompt
         projectID = request.project?.id ?? request.recipe.target.projectID ?? ""
         // 候補が 1 件だけ提示されている場合は最初から選んでおく。
         selectedAgentID = request.candidates.count == 1 ? request.candidates[0].id : ""
@@ -238,7 +263,12 @@ struct ArgumentField: View {
                 if argument.required {
                     Text("*").font(.caption).foregroundStyle(.red)
                 }
-                Text(argument.type.displayName).font(.caption2).foregroundStyle(.tertiary)
+                Label(argument.type.displayName, systemImage: argument.type.symbolName)
+                    .font(.caption2).foregroundStyle(.tertiary)
+                if argument.useClipboardAsDefault {
+                    Label("Clipboard", systemImage: "doc.on.clipboard")
+                        .font(.caption2).foregroundStyle(.purple)
+                }
             }
 
             switch argument.type {

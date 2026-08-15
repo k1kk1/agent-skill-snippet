@@ -50,6 +50,29 @@ final class HerdrClientTests: XCTestCase {
     ]}}
     """
 
+    func testProcessRunnerDrainsLargeStdoutAndStderrConcurrently() throws {
+        let runner = ProcessHerdrRunner(defaultTimeout: 5)
+        let result = try runner.run(
+            executable: "sh",
+            arguments: ["-c", "head -c 131072 /dev/zero | tr '\\0' o; head -c 131072 /dev/zero | tr '\\0' e >&2"],
+            input: nil
+        )
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.standardOutput.utf8.count, 131_072)
+        XCTAssertEqual(result.standardError.utf8.count, 131_072)
+    }
+
+    func testProcessRunnerTerminatesTimedOutCommand() {
+        let runner = ProcessHerdrRunner(defaultTimeout: 0.1, timeoutGrace: 0)
+        XCTAssertThrowsError(
+            try runner.run(executable: "sh", arguments: ["-c", "sleep 2"], input: nil)
+        ) { error in
+            guard case .timedOut? = error as? HerdrProcessError else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
     func testListAgentsDecodesJSON() throws {
         let runner = FakeHerdrRunner()
         runner.responses["agent list"] = HerdrCommandResult(
@@ -272,10 +295,20 @@ final class TargetResolverTests: XCTestCase {
         XCTAssertEqual(miss, .startNew(agent: "claude", project: other))
     }
 
-    func testAskAlwaysAsks() throws {
-        let resolution = try resolve(recipe(.ask), project: musicDB, agents: agents)
-        XCTAssertEqual(resolution, .ask(candidates: agents, reason: .strategyIsAsk))
+    func testReuseMatchesWorkspaceWhenRecipeHasOne() throws {
+        let inWorkspace = HerdrAgent(id: "w1:p1", agent: "claude", status: "idle", workspaceID: "w1")
+        let elsewhere = HerdrAgent(id: "w2:p1", agent: "claude", status: "idle", workspaceID: "w2")
+        let recipe = Recipe(
+            id: "r", name: "R",
+            target: TargetSpec(session: .reuseIfAvailable, workspaceID: "w2"),
+            body: "hello"
+        )
+        XCTAssertEqual(
+            try resolve(recipe, project: nil, agents: [inWorkspace, elsewhere]),
+            .resolved(elsewhere)
+        )
     }
+
 
     func testRankingPrefersIdleThenDoneAndAvoidsWorking() {
         let working = HerdrAgent(id: "p1", agent: "codex", status: "working")
@@ -385,26 +418,116 @@ final class RecipeRunnerTests: XCTestCase {
         XCTAssertEqual(receipt.notificationText, "Paste Me — Pasted to ComposerSketch / Codex")
     }
 
-    func testUnresolvedTargetReturnsNeedsTargetWithPrompt() throws {
+    /// 指定した名前の workspace がまだ無ければ、その名前で作る。
+    func testWorkspaceNameIsCreatedWhenMissing() throws {
         let fake = FakeHerdrRunner()
-        fake.responses["agent list"] = agentListResult()
-        let (runner, _) = runner(fake, clipboard: FakeClipboard())
-
-        let recipe = Recipe(
-            id: "ask", name: "Ask", mode: .submit,
-            target: TargetSpec(session: .ask),
-            body: "本文"
+        fake.responses["agent list"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"agents":[]}}"#, standardError: ""
         )
-        let outcome = try runner.run(recipe: recipe, values: [:], project: nil)
+        fake.responses["workspace list"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"workspaces":[{"workspace_id":"w1","label":"mushi-battle"}]}}"#,
+            standardError: ""
+        )
+        fake.responses["workspace create"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"root_pane":{"pane_id":"w3:p1","workspace_id":"w3"},"workspace":{"workspace_id":"w3","label":"new-space"}}}"#,
+            standardError: ""
+        )
+        let started = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agent":{"pane_id":"w3:p1","agent":"codex","agent_status":"idle"}}}"#,
+            standardError: ""
+        )
+        fake.responses["agent start"] = started
+        fake.responses["agent wait"] = started
 
-        guard case .needsTarget(let prompt, let candidates, let reason) = outcome else {
-            return XCTFail("needsTarget のはず")
-        }
-        XCTAssertEqual(prompt, "本文")
-        XCTAssertEqual(candidates.count, 1)
-        XCTAssertEqual(reason, .strategyIsAsk)
-        // 選ばせる段階では送信していない。
-        XCTAssertFalse(fake.invocations.contains { $0.arguments.contains("prompt") })
+        let (runner, _) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "ws", name: "WS", mode: .submit,
+            target: TargetSpec(session: .newSession, workspaceName: "new-space"),
+            body: "hello"
+        )
+        _ = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        let create = fake.invocations.first { $0.arguments.prefix(2) == ["workspace", "create"] }
+        XCTAssertNotNil(create)
+        XCTAssertTrue(create?.arguments.contains("new-space") ?? false)
+    }
+
+    /// Recipe に作業フォルダが無いときは、設定の既定 cwd で起動する。
+    func testDefaultWorkingDirectoryIsUsedWhenRecipeHasNoProject() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"agents":[]}}"#, standardError: ""
+        )
+        fake.responses["workspace list"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"workspaces":[{"workspace_id":"w1","label":"AgentRecipes"}]}}"#,
+            standardError: ""
+        )
+        fake.responses["tab create"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"root_pane":{"pane_id":"w1:p7"}}}"#, standardError: ""
+        )
+        let started = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agent":{"pane_id":"w1:p7","agent":"codex","agent_status":"idle"}}}"#,
+            standardError: ""
+        )
+        fake.responses["agent start"] = started
+        fake.responses["agent wait"] = started
+
+        let runner = RecipeRunner(
+            client: makeClient(fake),
+            agentKind: .codex,
+            defaultWorkingDirectory: "/Users/x/src",
+            clipboard: FakeClipboard()
+        )
+        let recipe = Recipe(id: "d", name: "D", mode: .submit, body: "hello")
+        _ = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        let create = fake.invocations.first { $0.arguments.prefix(2) == ["tab", "create"] }
+        XCTAssertEqual(
+            create?.arguments,
+            ["tab", "create", "--no-focus", "--workspace", "w1", "--cwd", "/Users/x/src", "--label", "codex"]
+        )
+    }
+
+    /// 既に同じ名前の workspace があれば、その中に tab を作る。
+    func testWorkspaceNameReusesExistingWorkspace() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"agents":[]}}"#, standardError: ""
+        )
+        fake.responses["workspace list"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"workspaces":[{"workspace_id":"w1","label":"mushi-battle"}]}}"#,
+            standardError: ""
+        )
+        fake.responses["tab create"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"root_pane":{"pane_id":"w1:p5"}}}"#, standardError: ""
+        )
+        let started = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agent":{"pane_id":"w1:p5","agent":"codex","agent_status":"idle"}}}"#,
+            standardError: ""
+        )
+        fake.responses["agent start"] = started
+        fake.responses["agent wait"] = started
+
+        let (runner, _) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "ws", name: "WS", mode: .submit,
+            // id は古くなっていても、名前が一致すればそこを使う。
+            target: TargetSpec(session: .newSession, workspaceID: "gone", workspaceName: "Mushi-Battle"),
+            body: "hello"
+        )
+        _ = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        XCTAssertEqual(
+            fake.invocations.first { $0.arguments.prefix(2) == ["tab", "create"] }?.arguments,
+            ["tab", "create", "--no-focus", "--workspace", "w1", "--label", "codex"]
+        )
     }
 
     /// AgentRecipes space が無いときは作成時のroot paneでAgentを起動する。
@@ -495,6 +618,40 @@ final class RecipeRunnerTests: XCTestCase {
         )
         XCTAssertEqual(fake.invocations.filter { $0.arguments.prefix(2) == ["agent", "start"] }.count, 2)
         XCTAssertEqual(fake.lastArguments, ["agent", "prompt", "w1:pA", "hello"])
+    }
+
+    func testStartNewUsesSelectedWorkspace() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"agents":[]}}"#, standardError: ""
+        )
+        fake.responses["workspace list"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"workspaces":[{"workspace_id":"w9","label":"Client Work"}]}}"#,
+            standardError: ""
+        )
+        fake.responses["tab create"] = HerdrCommandResult(
+            exitCode: 0, standardOutput: #"{"result":{"root_pane":{"pane_id":"w9:p2"}}}"#, standardError: ""
+        )
+        let started = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agent":{"pane_id":"w9:p2","agent":"codex","agent_status":"idle"}}}"#,
+            standardError: ""
+        )
+        fake.responses["agent start"] = started
+        fake.responses["agent wait"] = started
+
+        let (runner, _) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "workspace", name: "Workspace", mode: .submit,
+            target: TargetSpec(session: .reuseIfAvailable, workspaceID: "w9"), body: "hello"
+        )
+        _ = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        XCTAssertEqual(
+            fake.invocations.first { $0.arguments.prefix(2) == ["tab", "create"] }?.arguments,
+            ["tab", "create", "--no-focus", "--workspace", "w9", "--label", "codex"]
+        )
     }
 
     func testMissingArgumentIsRecordedAsFailure() throws {

@@ -1,5 +1,8 @@
 import Foundation
 import AgentRecipesCore
+#if os(macOS)
+import Darwin
+#endif
 
 /// Herdr CLI との唯一の接点。
 /// UI から直接 herdr を呼ばず、必ずこのクラスを経由する
@@ -296,8 +299,27 @@ public protocol HerdrCommandRunning: Sendable {
     func run(executable: String, arguments: [String], input: String?) throws -> HerdrCommandResult
 }
 
+enum HerdrProcessError: LocalizedError {
+    case timedOut(command: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut(let command): return "herdr が時間内に完了しませんでした: \(command)"
+        }
+    }
+}
+
 /// Swift の Process で `/usr/bin/env herdr ...` を起動する。
 struct ProcessHerdrRunner: HerdrCommandRunning {
+    /// 通常コマンドの上限。`--timeout` 指定の待機系はその値に余裕を加える。
+    let defaultTimeout: TimeInterval
+    let timeoutGrace: TimeInterval
+
+    init(defaultTimeout: TimeInterval = 30, timeoutGrace: TimeInterval = 15) {
+        self.defaultTimeout = defaultTimeout
+        self.timeoutGrace = timeoutGrace
+    }
+
     func run(executable: String, arguments: [String], input: String?) throws -> HerdrCommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -310,14 +332,70 @@ struct ProcessHerdrRunner: HerdrCommandRunning {
         process.standardInput = FileHandle.nullDevice
         try process.run()
 
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        // stdout / stderr は必ず並行に消費する。片方の pipe が満杯になっても
+        // 子プロセスと相互に待ち続けないようにする。
+        let group = DispatchGroup()
+        let outData = DataBox()
+        let errData = DataBox()
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            outData.set(data)
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            let data = err.fileHandleForReading.readDataToEndOfFile()
+            errData.set(data)
+            group.leave()
+        }
+
+        let terminated = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in terminated.signal() }
+        let timeout = commandTimeout(arguments: arguments)
+        if terminated.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if terminated.wait(timeout: .now() + 2) == .timedOut {
+                #if os(macOS)
+                _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                #endif
+                _ = terminated.wait(timeout: .now() + 2)
+            }
+            group.wait()
+            throw HerdrProcessError.timedOut(command: ([executable] + arguments.prefix(2)).joined(separator: " "))
+        }
+        group.wait()
 
         return HerdrCommandResult(
             exitCode: process.terminationStatus,
-            standardOutput: String(decoding: outData, as: UTF8.self),
-            standardError: String(decoding: errData, as: UTF8.self)
+            standardOutput: String(decoding: outData.get(), as: UTF8.self),
+            standardError: String(decoding: errData.get(), as: UTF8.self)
         )
+    }
+
+    private func commandTimeout(arguments: [String]) -> TimeInterval {
+        guard let index = arguments.firstIndex(of: "--timeout"),
+              arguments.indices.contains(index + 1),
+              let milliseconds = TimeInterval(arguments[index + 1]) else {
+            return defaultTimeout
+        }
+        return max(defaultTimeout, milliseconds / 1_000 + timeoutGrace)
+    }
+}
+
+private final class DataBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Data()
+
+    func set(_ data: Data) {
+        lock.lock()
+        value = data
+        lock.unlock()
+    }
+
+    func get() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }

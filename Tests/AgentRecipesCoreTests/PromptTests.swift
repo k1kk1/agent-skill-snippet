@@ -3,8 +3,12 @@ import XCTest
 
 final class FakeClipboard: ClipboardAccess, @unchecked Sendable {
     var contents: String
+    private(set) var readCount = 0
     init(_ contents: String = "") { self.contents = contents }
-    func read() -> String { contents }
+    func read() -> String {
+        readCount += 1
+        return contents
+    }
     func write(_ string: String) { contents = string }
 }
 
@@ -97,6 +101,27 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertEqual(prompt, "以下:\nlet x = 1")
     }
 
+    func testClipboardIsNotReadWhenRecipeDoesNotUseIt() throws {
+        let clipboard = FakeClipboard("private clipboard")
+        let recipe = Recipe(id: "plain", name: "Plain", body: "{{date}} only")
+        _ = try PromptBuilder(clipboard: clipboard).build(recipe: recipe, userValues: [:], project: nil)
+        XCTAssertEqual(clipboard.readCount, 0)
+    }
+
+    func testClipboardIsReadOnceForMultipleClipboardDefaults() {
+        let clipboard = FakeClipboard("shared")
+        let recipe = Recipe(
+            id: "clip", name: "Clipboard",
+            arguments: [
+                ArgumentSpec(name: "first", useClipboardAsDefault: true),
+                ArgumentSpec(name: "second", useClipboardAsDefault: true),
+            ],
+            body: "{{first}} {{second}}"
+        )
+        XCTAssertEqual(PromptBuilder(clipboard: clipboard).initialValues(for: recipe), ["first": "shared", "second": "shared"])
+        XCTAssertEqual(clipboard.readCount, 1)
+    }
+
     func testProjectVariables() throws {
         let project = Project(name: "music-db", path: "~/src/music-db")
         let recipe = Recipe(id: "p", name: "P", body: "{{project}} @ {{cwd}}")
@@ -125,6 +150,23 @@ final class PromptBuilderTests: XCTestCase {
         let prompt = try PromptBuilder(clipboard: FakeClipboard())
             .build(recipe: recipe, userValues: [:], project: nil)
         XCTAssertEqual(prompt, "hello")
+    }
+
+    func testAdditionalPromptIsIncludedOnlyWhenRecipeAcceptsIt() throws {
+        let enabled = Recipe(
+            id: "enabled", name: "Enabled", acceptsAdditionalPrompt: true, body: "基本の指示"
+        )
+        let disabled = Recipe(id: "disabled", name: "Disabled", body: "基本の指示")
+        let builder = PromptBuilder(clipboard: FakeClipboard())
+
+        XCTAssertEqual(
+            try builder.build(recipe: enabled, userValues: [:], project: nil, additionalPrompt: "優先度を高く"),
+            "基本の指示\n\n追加の指示:\n優先度を高く"
+        )
+        XCTAssertEqual(
+            try builder.build(recipe: disabled, userValues: [:], project: nil, additionalPrompt: "混入してはいけない"),
+            "基本の指示"
+        )
     }
 
     func testBuiltinVariableSetIsTheMVPFive() {
@@ -157,9 +199,10 @@ final class PromptBuilderTests: XCTestCase {
         recipe.target.askProject = true
         XCTAssertTrue(recipe.needsUserInput)
 
-        var asking = Recipe(id: "y", name: "Y", body: "hello")
-        asking.target.session = .ask
-        XCTAssertTrue(asking.needsUserInput)
+        // 送信先は実行時に聞かない。workspace 指定だけではフォームを開かない。
+        recipe.target.askProject = false
+        recipe.target.workspaceName = "AgentRecipes"
+        XCTAssertFalse(recipe.needsUserInput)
     }
 
     func testSearchMatchesNameTagsAndAgent() {

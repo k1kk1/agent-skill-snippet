@@ -28,13 +28,16 @@ public struct ArgumentResolver: Sendable {
     /// 入力フォームの初期値。default → clipboard の順で埋める。
     public func initialValues(for recipe: Recipe) -> [String: String] {
         var values: [String: String] = [:]
+        let needsClipboard = recipe.arguments.contains(where: \.useClipboardAsDefault)
+        let clipboardValue = needsClipboard
+            ? clipboard.read().trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
         for argument in recipe.arguments {
             if let d = argument.defaultValue, !d.isEmpty {
                 values[argument.name] = d
             }
             if argument.useClipboardAsDefault {
-                let clip = clipboard.read().trimmingCharacters(in: .whitespacesAndNewlines)
-                if !clip.isEmpty { values[argument.name] = clip }
+                if !clipboardValue.isEmpty { values[argument.name] = clipboardValue }
             }
         }
         return values
@@ -47,11 +50,17 @@ public struct ArgumentResolver: Sendable {
 
         var values: [String: String] = [:]
         var missing: [String] = []
+        let needsClipboard = recipe.arguments.contains { argument in
+            argument.useClipboardAsDefault && (userValues[argument.name] ?? argument.defaultValue ?? "").isEmpty
+        }
+        let clipboardValue = needsClipboard
+            ? clipboard.read().trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
 
         for argument in recipe.arguments {
             var value = userValues[argument.name] ?? argument.defaultValue ?? ""
             if value.isEmpty, argument.useClipboardAsDefault {
-                value = clipboard.read().trimmingCharacters(in: .whitespacesAndNewlines)
+                value = clipboardValue
             }
             if value.isEmpty {
                 if argument.required { missing.append(argument.name) }

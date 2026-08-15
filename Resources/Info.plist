@@ -8,6 +8,8 @@
 	<string>Agent Recipes</string>
 	<key>CFBundleExecutable</key>
 	<string>AgentRecipesApp</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.kikki.agent-recipes</string>
 	<key>CFBundlePackageType</key>

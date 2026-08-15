@@ -30,7 +30,8 @@ final class PanelPresenter {
     func showManager(model: AppModel) {
         let window = managerWindow ?? makeWindow(
             title: "Manage Recipes",
-            size: NSSize(width: 920, height: 620),
+            size: NSSize(width: 1_180, height: 620),
+            minimumSize: NSSize(width: 1_100, height: 540),
             content: RecipeManagerView(model: model)
         )
         managerWindow = window
@@ -38,11 +39,21 @@ final class PanelPresenter {
     }
 
     func showSettings(model: AppModel, tab: SettingsView.Tab = .general) {
-        let window = settingsWindow ?? makeWindow(
-            title: "Settings",
-            size: NSSize(width: 620, height: 560),
-            content: SettingsView(model: model, selection: tab)
-        )
+        let window: NSWindow
+        if let existing = settingsWindow {
+            // @State の初期値は既存 View には再適用されないため、起動引数で
+            // 指定されたタブを確実に反映できるよう rootView を差し替える。
+            let controller = NSHostingController(rootView: SettingsView(model: model, selection: tab))
+            controller.sizingOptions = []
+            existing.contentViewController = controller
+            window = existing
+        } else {
+            window = makeWindow(
+                title: "Settings",
+                size: NSSize(width: 620, height: 560),
+                content: SettingsView(model: model, selection: tab)
+            )
+        }
         settingsWindow = window
         present(window)
     }
@@ -58,7 +69,12 @@ final class PanelPresenter {
         present(window)
     }
 
-    private func makeWindow(title: String, size: NSSize, content: some View) -> NSWindow {
+    private func makeWindow(
+        title: String,
+        size: NSSize,
+        minimumSize: NSSize? = nil,
+        content: some View
+    ) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -66,6 +82,7 @@ final class PanelPresenter {
             defer: false
         )
         window.title = title
+        window.contentMinSize = minimumSize ?? NSSize(width: 360, height: 320)
         // SwiftUI のビューを contentView に直接入れると、macOS 26 では
         // titlebar の safe area が伝播せず、先頭のフォームやツールバーが
         // ウィンドウタイトルと重なることがある。NSHostingController 経由に

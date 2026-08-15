@@ -19,19 +19,30 @@ final class AppModel: ObservableObject {
 
     /// Herdr 上の Agent 一覧と接続状態。
     @Published private(set) var agents: [HerdrAgent] = []
+    /// Herdr 上の workspace 一覧。Recipe の再利用対象を絞るために使う。
+    @Published private(set) var workspaces: [HerdrWorkspace] = []
     @Published private(set) var connection: HerdrConnectionStatus = .notInstalled
+
+    /// LLM ごとの MCP 接続状況。Skill が MCP 待ちで止まるのを事前に気づけるようにする。
+    @Published private(set) var mcp: [AgentKind: MCPInspection] = [:]
+    @Published private(set) var mcpChecking: Set<AgentKind> = []
 
     @Published var runRequest: RunRequest?
     /// Submit の応答結果。Result ウィンドウが参照する。
     @Published var result: RunResult?
-    /// 応答待ちの Recipe 名 (メニューに出す)。
-    @Published private(set) var pendingResults: [String] = []
+    /// 応答待ちの実行。Recipe 名ではなく実行ごとの UUID で対応付ける。
+    @Published private(set) var pendingResults: [PendingResult] = []
 
     private(set) var layout: StorageLayout
     private(set) var recipeRepository: RecipeRepository
     private(set) var projectRepository: ProjectRepository
     private let settingsRepository: SettingsRepository
     private(set) var historyRepository: HistoryRepository
+    private var appliedSettings: AppSettings
+    private var settingsSaveTask: Task<Void, Never>?
+    private var clipboardSnapshot = ""
+    private var hasClipboardSnapshot = false
+    private var initialValuesCache: [Recipe.ID: [String: String]] = [:]
 
     init() {
         let base = StorageLayout()
@@ -43,6 +54,7 @@ final class AppModel: ObservableObject {
         self.recipeRepository = RecipeRepository(layout: layout)
         self.projectRepository = ProjectRepository(layout: layout)
         self.historyRepository = HistoryRepository(layout: layout, limit: loaded.historyLimit)
+        self.appliedSettings = loaded
         bootstrapIfNeeded()
         reload()
     }
@@ -58,13 +70,17 @@ final class AppModel: ObservableObject {
     /// Herdr の状態を取り直す。メニューを開いたときと Settings から呼ぶ。
     func refreshHerdr() {
         let client = makeClient()
-        Task.detached(priority: .utility) {
-            let status = client.connectionStatus()
-            let agents = (try? client.listAgents()) ?? []
-            await MainActor.run {
-                self.connection = status
-                self.agents = agents
+        Task {
+            let state = await HerdrBackground.run {
+                (
+                    client.connectionStatus(),
+                    (try? client.listAgents()) ?? [],
+                    (try? client.listWorkspaces()) ?? []
+                )
             }
+            self.connection = state.0
+            self.agents = state.1
+            self.workspaces = state.2
         }
     }
 
@@ -76,6 +92,27 @@ final class AppModel: ObservableObject {
             await MainActor.run { self.skills = found }
         }
     }
+
+    /// MCP の接続状況を調べ直す。CLI の health check を待つので数秒かかる。
+    /// - Parameter agent: nil ならすべての LLM。
+    func refreshMCP(agent: AgentKind? = nil) {
+        let targets = agent.map { [$0] } ?? AgentKind.allCases
+        // MCP 設定は cwd 依存なので、Agent を起動するのと同じディレクトリで調べる。
+        let cwd = settings.ensureDefaultWorkingDirectory()
+        for kind in targets where !mcpChecking.contains(kind) {
+            mcpChecking.insert(kind)
+            Task.detached(priority: .utility) {
+                let inspection = MCPScanner().inspect(agent: kind, workingDirectory: cwd)
+                await MainActor.run {
+                    self.mcp[kind] = inspection
+                    self.mcpChecking.remove(kind)
+                }
+            }
+        }
+    }
+
+    /// 現在の LLM で接続に失敗している MCP サーバー。
+    var currentMCPFailures: [MCPServer] { mcp[settings.agent]?.failures ?? [] }
 
     /// SKILL.md をエディタで開く。設定のコマンドで開けなければ OS の既定アプリに任せる。
     func openSkillFile(_ skill: DiscoveredSkill) {
@@ -89,9 +126,13 @@ final class AppModel: ObservableObject {
 
     private func bootstrapIfNeeded() {
         try? layout.ensureDirectories()
-        guard RecipeRepository(layout: layout).loadAll().isEmpty else { return }
+        // 初回だけでなく、新しい組み込み Recipe も既存の利用者へ安全に追加する。
+        // 同じ id の Recipe は上書きしないため、利用者の編集内容は保持される。
+        let existingIDs = Set(recipeRepository.loadAll().map(\.id))
         for sample in SampleRecipes.all {
-            _ = try? recipeRepository.save(sample)
+            if !existingIDs.contains(sample.id) {
+                _ = try? recipeRepository.save(sample)
+            }
         }
         try? settingsRepository.save(settings)
     }
@@ -135,7 +176,7 @@ final class AppModel: ObservableObject {
     /// フォームを開くか。
     /// 通常は開かない。開くのは Recipe が明示的にそう設定されているときと ⌥ クリックだけ。
     func opensForm(_ recipe: Recipe) -> Bool {
-        recipe.target.askProject || recipe.target.session == .ask
+        recipe.target.askProject
     }
 
     /// 引数の値が実行時に埋まらない Recipe か (Clipboard も既定値も無い)。
@@ -144,6 +185,13 @@ final class AppModel: ObservableObject {
         return recipe.arguments.contains { argument in
             argument.required && (values[argument.name] ?? "").isEmpty
         }
+    }
+
+    /// ポップオーバー / 実行フォームを開いたタイミングで 1 回だけ読み、表示中は使い回す。
+    func refreshClipboardSnapshot() {
+        clipboardSnapshot = SystemClipboard().read()
+        hasClipboardSnapshot = true
+        initialValuesCache.removeAll()
     }
 
     /// クリックしたときに実際に行われるモード。引数が埋まらない Recipe は「チャットに入力」になる。
@@ -181,7 +229,8 @@ final class AppModel: ObservableObject {
         values: [String: String],
         project: Project?,
         mode: ExecutionMode,
-        agent: HerdrAgent?
+        agent: HerdrAgent?,
+        additionalPrompt: String = ""
     ) {
         let runner = makeRunner()
         let notify = settings.notificationsEnabled
@@ -189,62 +238,46 @@ final class AppModel: ObservableObject {
         let waitMS: Int? = (mode == .submit && settings.waitForResult)
             ? settings.resultTimeoutSeconds * 1000
             : nil
-        if waitMS != nil { pendingResults.append(recipe.name) }
+        let pendingID = waitMS.map { _ in UUID() }
+        if let pendingID { pendingResults.append(PendingResult(id: pendingID, recipeName: recipe.name)) }
 
-        Task.detached(priority: .userInitiated) {
+        Task {
             do {
-                if let agent {
-                    let prompt = try runner.buildPrompt(recipe: recipe, values: values, project: project)
-                    let receipt = try runner.send(
-                        prompt: prompt, recipe: recipe, mode: mode, agent: agent,
-                        project: project, waitTimeoutMS: waitMS
+                let outcome: RunOutcome = try await HerdrBackground.run {
+                    if let agent {
+                        let prompt = try runner.buildPrompt(
+                            recipe: recipe,
+                            values: values,
+                            project: project,
+                            additionalPrompt: additionalPrompt
+                        )
+                        return .completed(try runner.send(
+                            prompt: prompt, recipe: recipe, mode: mode, agent: agent,
+                            project: project, waitTimeoutMS: waitMS
+                        ))
+                    }
+                    return try runner.run(
+                        recipe: recipe, values: values, project: project,
+                        additionalPrompt: additionalPrompt,
+                        modeOverride: mode, waitTimeoutMS: waitMS
                     )
-                    await MainActor.run { self.finish(receipt, notify: notify, waited: waitMS != nil) }
-                    return
                 }
-
-                let outcome = try runner.run(
-                    recipe: recipe, values: values, project: project,
-                    modeOverride: mode, waitTimeoutMS: waitMS
-                )
                 switch outcome {
                 case .completed(let receipt):
-                    await MainActor.run { self.finish(receipt, notify: notify, waited: waitMS != nil) }
-
-                case .needsTarget(_, let candidates, let reason):
-                    // 送信先が決まらなかったので、フォームで選ばせる。
-                    await MainActor.run {
-                        self.agents = candidates.isEmpty ? self.agents : candidates
-                        self.runRequest = RunRequest(
-                            recipe: recipe,
-                            project: project,
-                            values: values,
-                            modeOverride: mode,
-                            candidates: candidates,
-                            reason: reason
-                        )
-                        PanelPresenter.shared.showRunForm(model: self)
-                        if candidates.isEmpty {
-                            ToastPresenter.shared.show(Toast(
-                                message: TargetPrompt.describe(reason), isError: true
-                            ))
-                        }
-                    }
+                    self.finish(receipt, notify: notify, waited: waitMS != nil, pendingID: pendingID)
                 }
             } catch {
-                await MainActor.run {
-                    self.clearPending(recipe.name)
-                    ToastPresenter.shared.show(Toast(message: error.localizedDescription, isError: true))
-                }
+                self.clearPending(pendingID)
+                ToastPresenter.shared.show(Toast(message: error.localizedDescription, isError: true))
             }
         }
     }
 
     /// 送信完了。待機していた場合は Agent の出力を読み取って結果ウィンドウに出す。
-    private func finish(_ receipt: RunReceipt, notify: Bool, waited: Bool) {
+    private func finish(_ receipt: RunReceipt, notify: Bool, waited: Bool, pendingID: UUID?) {
         recentIDs = historyRepository.recentRecipeIDs(limit: 5)
         PanelPresenter.shared.closeRunForm()
-        clearPending(receipt.recipeName)
+        clearPending(pendingID)
 
         guard waited, let agent = receipt.agent else {
             if notify { ToastPresenter.shared.show(Toast(message: receipt.notificationText, isError: false)) }
@@ -252,41 +285,53 @@ final class AppModel: ObservableObject {
         }
 
         let client = makeClient()
-        Task.detached(priority: .utility) {
-            let output = (try? client.readPane(agent.paneID, lines: 200)) ?? ""
-            await MainActor.run {
-                self.result = RunResult(
-                    recipeName: receipt.recipeName,
-                    agent: agent,
-                    output: RunResult.trimToLastAnswer(output)
-                )
-                PanelPresenter.shared.showResult(model: self)
-                if notify {
-                    ToastPresenter.shared.show(Toast(
-                        message: "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました",
-                        isError: false
-                    ))
-                }
+        Task {
+            let output = await HerdrBackground.run { (try? client.readPane(agent.paneID, lines: 200)) ?? "" }
+            self.result = RunResult(
+                recipeName: receipt.recipeName,
+                agent: agent,
+                output: RunResult.trimToLastAnswer(output)
+            )
+            PanelPresenter.shared.showResult(model: self)
+            if notify {
+                ToastPresenter.shared.show(Toast(
+                    message: "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました",
+                    isError: false
+                ))
             }
         }
     }
 
-    private func clearPending(_ name: String) {
-        if let index = pendingResults.firstIndex(of: name) { pendingResults.remove(at: index) }
+    private func clearPending(_ id: UUID?) {
+        guard let id, let index = pendingResults.firstIndex(where: { $0.id == id }) else { return }
+        pendingResults.remove(at: index)
     }
 
     /// 結果ウィンドウから Herdr の該当 Agent を前面に出す。
     func focusInHerdr(_ agent: HerdrAgent) {
         let client = makeClient()
-        Task.detached(priority: .utility) { try? client.focusAgent(target: agent.id) }
+        Task { _ = await HerdrBackground.run { try? client.focusAgent(target: agent.id) } }
     }
 
-    func preview(recipe: Recipe, values: [String: String], project: Project?) -> String {
-        makeRunner().preview(recipe: recipe, values: values, project: project)
+    func preview(
+        recipe: Recipe,
+        values: [String: String],
+        project: Project?,
+        additionalPrompt: String = ""
+    ) -> String {
+        makeRunner(clipboard: SnapshotClipboard(value: clipboardValue())).preview(
+            recipe: recipe,
+            values: values,
+            project: project,
+            additionalPrompt: additionalPrompt
+        )
     }
 
     func initialValues(for recipe: Recipe) -> [String: String] {
-        makeRunner().initialValues(for: recipe)
+        if let cached = initialValuesCache[recipe.id] { return cached }
+        let values = makeRunner(clipboard: SnapshotClipboard(value: clipboardValue())).initialValues(for: recipe)
+        initialValuesCache[recipe.id] = values
+        return values
     }
 
     /// フォームの送信先候補。Recipe の条件で絞ったものを優先して出す。
@@ -316,21 +361,61 @@ final class AppModel: ObservableObject {
         reload()
     }
 
+    /// Finder で選んだローカルディレクトリを Project として追加する。
+    @discardableResult
+    func addWorkingDirectory() -> Project? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "追加"
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        do {
+            let project = try projectRepository.add(name: url.lastPathComponent, path: url.path)
+            projects = projectRepository.load()
+            return project
+        } catch {
+            ToastPresenter.shared.show(Toast(message: error.localizedDescription, isError: true))
+            return nil
+        }
+    }
+
     func saveProjects() {
         try? projectRepository.save(projects)
         reload()
     }
 
+    func scheduleSettingsSave(rescanSkills: Bool = false) {
+        settingsSaveTask?.cancel()
+        settingsSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self else { return }
+            self.saveSettings()
+            if rescanSkills { self.reloadSkills() }
+        }
+    }
+
     func saveSettings() {
+        let previous = appliedSettings
         try? settingsRepository.save(settings)
-        // Recipe ディレクトリの差し替えに追随する。
-        layout = StorageLayout(recipesDirectory: settings.recipesDirectory)
-        recipeRepository = RecipeRepository(layout: layout)
-        projectRepository = ProjectRepository(layout: layout)
-        historyRepository = HistoryRepository(layout: layout, limit: settings.historyLimit)
-        LoginItem.setEnabled(settings.launchAtLogin)
-        reload()
-        refreshHerdr()
+        if previous.recipesDirectory != settings.recipesDirectory {
+            // Recipe ディレクトリの差し替えにだけ再読込が必要。
+            layout = StorageLayout(recipesDirectory: settings.recipesDirectory)
+            recipeRepository = RecipeRepository(layout: layout)
+            projectRepository = ProjectRepository(layout: layout)
+            historyRepository = HistoryRepository(layout: layout, limit: settings.historyLimit)
+            reload()
+        } else if previous.historyLimit != settings.historyLimit {
+            historyRepository = HistoryRepository(layout: layout, limit: settings.historyLimit)
+        }
+        if previous.launchAtLogin != settings.launchAtLogin {
+            LoginItem.setEnabled(settings.launchAtLogin)
+        }
+        if previous.herdrExecutablePath != settings.herdrExecutablePath {
+            refreshHerdr()
+        }
+        appliedSettings = settings
     }
 
     // MARK: - 依存の組み立て
@@ -342,8 +427,50 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func makeRunner() -> RecipeRunner {
-        RecipeRunner(client: makeClient(), agentKind: settings.agent, history: historyRepository)
+    private func makeRunner(clipboard: ClipboardAccess = SystemClipboard()) -> RecipeRunner {
+        RecipeRunner(
+            client: makeClient(),
+            agentKind: settings.agent,
+            defaultWorkingDirectory: settings.ensureDefaultWorkingDirectory(),
+            clipboard: clipboard,
+            history: historyRepository
+        )
+    }
+
+    private func clipboardValue() -> String {
+        if !hasClipboardSnapshot { refreshClipboardSnapshot() }
+        return clipboardSnapshot
+    }
+}
+
+struct PendingResult: Identifiable, Equatable {
+    let id: UUID
+    let recipeName: String
+}
+
+private struct SnapshotClipboard: ClipboardAccess {
+    let value: String
+    func read() -> String { value }
+    func write(_: String) {}
+}
+
+/// Process.waitUntilExit などの同期 API を Swift Concurrency の協調プールから隔離する。
+private enum HerdrBackground {
+    private static let queue = DispatchQueue(label: "dev.agentrecipes.herdr", qos: .userInitiated, attributes: .concurrent)
+
+    static func run<Value: Sendable>(_ operation: @escaping @Sendable () throws -> Value) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do { continuation.resume(returning: try operation()) }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    static func run<Value: Sendable>(_ operation: @escaping @Sendable () -> Value) async -> Value {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: operation()) }
+        }
     }
 }
 
@@ -377,19 +504,10 @@ struct RunRequest: Identifiable {
     var recipe: Recipe
     var project: Project?
     var values: [String: String] = [:]
+    var additionalPrompt: String = ""
     var modeOverride: ExecutionMode?
-    /// 送信先を選ばせる必要がある場合の候補。
+    /// フォームで送信先を選ぶときの候補。
     var candidates: [HerdrAgent] = []
-    var reason: TargetResolution.AskReason?
-}
-
-enum TargetPrompt {
-    static func describe(_ reason: TargetResolution.AskReason) -> String {
-        switch reason {
-        case .strategyIsAsk: return "送信先を選んでください"
-        case .notFound: return "条件に合う Agent が見つかりません"
-        }
-    }
 }
 
 struct Toast: Identifiable, Equatable {

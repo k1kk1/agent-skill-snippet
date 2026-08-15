@@ -7,20 +7,13 @@ public enum TargetResolution: Hashable, Sendable {
     case resolved(HerdrAgent)
     /// 該当が無いので、新しい Agent を起動して送る。
     case startNew(agent: String, project: Project?)
-    /// ユーザーに選ばせる (session == .ask)。
-    case ask(candidates: [HerdrAgent], reason: AskReason)
-
-    public enum AskReason: Hashable, Sendable {
-        case strategyIsAsk
-        case notFound
-    }
 }
 
 /// Recipe + Project + Agent + Herdr の状態から送信先を決める専用層。
 /// Herdr CLI を直接呼ばず、渡された Agent 一覧だけで判断する (テストしやすさのため)。
 ///
 /// 候補が複数あっても聞き返さず、優先順位で 1 件に決める。
-/// 「毎回選びたい」場合だけ strategy に .ask を使う。
+/// 明示的に送信先を指定したい場合は、フォーム / CLI から Agent を渡す。
 public struct TargetResolver: Sendable {
     public init() {}
 
@@ -33,9 +26,6 @@ public struct TargetResolver: Sendable {
         agentKind: AgentKind
     ) throws -> TargetResolution {
         switch recipe.target.session {
-        case .ask:
-            return .ask(candidates: agents, reason: .strategyIsAsk)
-
         case .newSession:
             // 既定。既存セッションには入れず、必ず新しい Agent を起動する。
             return .startNew(agent: agentKind.herdrKind, project: project)
@@ -60,6 +50,9 @@ public struct TargetResolver: Sendable {
         }
         if target.projectID != nil, let project {
             candidates = candidates.filter { $0.normalizedCwd == project.normalizedPath }
+        }
+        if let workspaceID = target.workspaceID {
+            candidates = candidates.filter { $0.workspaceID == workspaceID }
         }
         return candidates
     }

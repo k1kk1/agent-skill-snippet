@@ -6,7 +6,7 @@ import HerdrKit
 struct RecipeManagerView: View {
     @ObservedObject var model: AppModel
 
-    @State private var selectedID: String?
+    @State private var selectedItem: SidebarItem?
     @State private var draft: Recipe?
     @State private var originalID: String?
     @State private var filter: String = ""
@@ -23,9 +23,7 @@ struct RecipeManagerView: View {
                 RecipeEditorView(
                     model: model,
                     recipe: Binding(get: { draft }, set: { self.draft = $0 }),
-                    onSave: save,
-                    onDelete: delete,
-                    onDuplicate: duplicate
+                    onAutoSave: { save(showToast: false) }
                 )
             } else {
                 emptyState
@@ -41,10 +39,12 @@ struct RecipeManagerView: View {
                 .help("サイドバーを表示／非表示")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button(action: createNew) {
-                    Label("New Recipe", systemImage: "plus")
+                Button {
+                    PanelPresenter.shared.showSettings(model: model)
+                } label: {
+                    Label("設定", systemImage: "gearshape")
                 }
-                .help("Recipe を追加")
+                .help("設定を開く")
             }
         }
         .onAppear {
@@ -53,25 +53,24 @@ struct RecipeManagerView: View {
             model.reloadSkills()
             selectInitialRecipeIfNeeded()
         }
-        .onChange(of: selectedID) { _, new in
-            guard let new, let recipe = model.recipes.first(where: { $0.id == new }) else {
-                draft = nil
-                originalID = nil
-                return
-            }
-            draft = recipe
-            originalID = recipe.id
-        }
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $selectedID) {
+            List(selection: Binding(get: { selectedItem }, set: { requestSelection($0) })) {
+                if !visibleSkills.isEmpty {
+                    Section("Agent Skills") {
+                        ForEach(visibleSkills) { skill in
+                            ManagerSkillRow(skill: skill, recipe: recipe(for: skill))
+                                .tag(SidebarItem.skill(skill.id))
+                        }
+                    }
+                }
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.isEmpty ? "Other" : category) {
                         ForEach(recipes(in: category)) { recipe in
                             ManagerRecipeRow(recipe: recipe)
-                            .tag(recipe.id)
+                                .tag(SidebarItem.recipe(recipe.id))
                         }
                     }
                 }
@@ -80,21 +79,20 @@ struct RecipeManagerView: View {
 
             Divider()
             HStack {
-                Button { createNew() } label: { Image(systemName: "plus") }
-                    .help("Recipe を追加")
                 Button { NSWorkspace.shared.open(model.layout.recipesDirectory) } label: {
                     Image(systemName: "folder")
                 }
                 .help("Recipe フォルダを開く")
                 Spacer()
-                Text("\(model.recipes.count) 件")
+                Text("\(visibleSkills.count) Skills · \(model.recipes.count) Recipes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .padding(8)
         }
-        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+        .frame(minWidth: 320)
+        .navigationSplitViewColumnWidth(min: 320, ideal: 340, max: 400)
     }
 
     private var visibleRecipes: [Recipe] {
@@ -102,15 +100,24 @@ struct RecipeManagerView: View {
         return query.isEmpty ? model.recipes : model.recipes.filter { $0.matches(query) }
     }
 
+    private var visibleSkills: [DiscoveredSkill] {
+        let query = filter.trimmingCharacters(in: .whitespaces)
+        return query.isEmpty ? model.skills : model.skills.filter { $0.matches(query) }
+    }
+
+    private var standaloneRecipes: [Recipe] {
+        visibleRecipes.filter { $0.skill == nil }
+    }
+
     private var groupedCategories: [String] {
-        Array(Set(visibleRecipes.map { $0.category ?? "" })).sorted { lhs, rhs in
+        Array(Set(standaloneRecipes.map { $0.category ?? "" })).sorted { lhs, rhs in
             if lhs.isEmpty != rhs.isEmpty { return !lhs.isEmpty }
             return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
         }
     }
 
     private func recipes(in category: String) -> [Recipe] {
-        visibleRecipes.filter { ($0.category ?? "") == category }
+        standaloneRecipes.filter { ($0.category ?? "") == category }
     }
 
     private func toggleSidebar() {
@@ -119,72 +126,113 @@ struct RecipeManagerView: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: model.recipes.isEmpty ? "square.and.pencil" : "sidebar.left")
+            Image(systemName: model.skills.isEmpty ? "sparkles" : "sidebar.left")
                 .font(.system(size: 34))
                 .foregroundStyle(.secondary)
-            Text(model.recipes.isEmpty ? "最初の Recipe を作成" : "Recipe を選択してください")
+            Text(model.skills.isEmpty ? "Agent Skill が見つかりません" : "Skill を選択してください")
                 .font(.title3.weight(.semibold))
-            Text(model.recipes.isEmpty
-                 ? "Prompt をテンプレートとして保存し、コピー・入力・実行をまとめて扱えます。"
-                 : "左の一覧から選ぶと、設定と Prompt を編集できます。")
+            Text(model.skills.isEmpty
+                 ? "~/.claude/skills などに SKILL.md を置くと、ここに並びます。"
+                 : "左の一覧から選ぶと、実行方法と Prompt を編集できます。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
-            if model.recipes.isEmpty {
-                Button("Recipe を作成", action: createNew)
-                    .buttonStyle(.borderedProminent)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func selectInitialRecipeIfNeeded() {
-        guard selectedID == nil else { return }
-        let initial = model.recipes.sorted { lhs, rhs in
+        guard selectedItem == nil else { return }
+        let initial = standaloneRecipes.sorted { lhs, rhs in
             if lhs.favorite != rhs.favorite { return lhs.favorite && !rhs.favorite }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }.first ?? model.recipes.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }.first
-        selectedID = initial?.id
+        loadRecipe(id: initial?.id)
     }
 
-    private func createNew() {
-        let recipe = Recipe(
-            id: model.recipeRepository.uniqueID(base: "new-recipe"),
-            name: "New Recipe",
-            category: "Development",
-            mode: model.settings.defaultMode
-        )
-        model.save(recipe, originalID: nil)
-        selectedID = recipe.id
-    }
-
-    private func save() {
+    private func save(showToast: Bool = true) {
         guard var draft else { return }
         if draft.id.trimmingCharacters(in: .whitespaces).isEmpty {
-            draft.id = Recipe.makeID(from: draft.name)
+            draft.id = model.recipeRepository.uniqueID(base: Recipe.makeID(from: draft.name))
         }
         model.save(draft, originalID: originalID)
         originalID = draft.id
-        selectedID = draft.id
+        // Skill 行から開いている場合は、保存しても選択を Skill 行に残す。
+        if case .skill = selectedItem {} else {
+            selectedItem = .recipe(draft.id)
+        }
         self.draft = draft
-        ToastPresenter.shared.show(Toast(message: "'\(draft.name)' を保存しました", isError: false))
+        if showToast {
+            ToastPresenter.shared.show(Toast(message: "'\(draft.name)' を保存しました", isError: false))
+        }
     }
 
-    private func delete() {
-        guard let draft else { return }
-        model.delete(draft)
-        selectedID = nil
-        self.draft = nil
+    private var hasUnsavedChanges: Bool {
+        guard let draft else { return false }
+        guard let originalID else { return true }
+        return model.recipes.first(where: { $0.id == originalID }) != draft
     }
 
-    private func duplicate() {
-        guard var draft else { return }
-        draft.id = model.recipeRepository.uniqueID(base: draft.id)
-        draft.name += " Copy"
-        draft.favorite = false
-        model.save(draft, originalID: nil)
-        selectedID = draft.id
+    private func requestSelection(_ item: SidebarItem?) {
+        guard item != selectedItem else { return }
+        if hasUnsavedChanges {
+            // 自動保存の待機中でも、画面移動前に最新値を確定させる。
+            save(showToast: false)
+        }
+        switch item {
+        case .recipe(let id): loadRecipe(id: id)
+        case .skill(let path): selectSkill(path: path)
+        case nil: loadRecipe(id: nil)
+        }
+    }
+
+    private func loadRecipe(id: String?) {
+        selectedItem = id.map(SidebarItem.recipe)
+        guard let id, let recipe = model.recipes.first(where: { $0.id == id }) else {
+            draft = nil
+            originalID = nil
+            return
+        }
+        draft = recipe
+        originalID = recipe.id
+    }
+
+    private func recipe(for skill: DiscoveredSkill) -> Recipe? {
+        model.recipes.first {
+            $0.skill?.name == skill.name && $0.skill?.source == skill.source
+        }
+    }
+
+    private func selectSkill(path: String) {
+        // Skill 由来の Recipe を開いても、選択は押した Skill 行に残す。
+        selectedItem = .skill(path)
+        guard let skill = model.skills.first(where: { $0.id == path }) else { return }
+        if let existing = recipe(for: skill) {
+            draft = existing
+            originalID = existing.id
+            return
+        }
+
+        // Skill 自体は変更せず、Recipe 側に Prompt・入力・実行設定を持つ。
+        draft = Recipe(
+            id: "",
+            name: skill.name,
+            description: skill.description,
+            category: "Agent Skills",
+            skill: SkillReference(name: skill.name, source: skill.source),
+            mode: model.settings.defaultMode,
+            target: TargetSpec(),
+            body: skill.defaultPrompt ?? skill.examples.first ?? ""
+        )
+        originalID = nil
+    }
+
+    private enum SidebarItem: Hashable {
+        case recipe(String)
+        case skill(String)
     }
 }
 
@@ -210,6 +258,8 @@ private struct ManagerRecipeRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                // サイドバーは名前を優先し、詳細はツールチップで読めるアイコン表示にする。
+                RecipeInputBadges(recipe: recipe, compact: true)
             }
             Spacer(minLength: 4)
             if recipe.favorite {
@@ -224,6 +274,42 @@ private struct ManagerRecipeRow: View {
                 .help(recipe.mode.explanation)
         }
         .padding(.vertical, 3)
+    }
+}
+
+/// Agent Skill の一覧行。ローカル Recipe がある場合は、その設定状態も併記する。
+private struct ManagerSkillRow: View {
+    let skill: DiscoveredSkill
+    let recipe: Recipe?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.caption)
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(skill.name)
+                    .lineLimit(1)
+                if let recipe {
+                    RecipeInputBadges(recipe: recipe, compact: true)
+                } else if let description = skill.description, !description.isEmpty {
+                    Text(description)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    Text("選択して実行設定を追加")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 4)
+            Text(skill.source)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .help("Skill を選択して、Recipe 側の Prompt・入力・実行方法を設定します")
     }
 }
 
@@ -247,12 +333,15 @@ private struct EditorSection<Content: View>: View {
 struct RecipeEditorView: View {
     @ObservedObject var model: AppModel
     @Binding var recipe: Recipe
-    let onSave: () -> Void
-    let onDelete: () -> Void
-    let onDuplicate: () -> Void
+    let onAutoSave: () -> Void
 
     @State private var tagText: String = ""
-    @State private var showDeleteConfirm = false
+    @State private var autoSaveTask: Task<Void, Never>?
+
+    private enum WorkspaceChoice: Hashable {
+        case none
+        case specified
+    }
 
     var body: some View {
         ScrollView {
@@ -267,9 +356,6 @@ struct RecipeEditorView: View {
                 EditorSection(title: "Prompt", icon: "text.alignleft") {
                     promptSection
                 }
-                EditorSection(title: "Skill と結果", icon: "sparkles") {
-                    skillAndResultSection
-                }
                 EditorSection(title: "引数", icon: "switch.2") {
                     argumentsSection
                 }
@@ -279,24 +365,10 @@ struct RecipeEditorView: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button("複製", action: onDuplicate)
-                Button("削除", role: .destructive) { showDeleteConfirm = true }
-                Spacer()
-                Button("実行") { model.activate(recipe, forceForm: true) }
-                Button("保存", action: onSave)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut("s", modifiers: .command)
-            }
-            .padding(12)
-            .background(.bar)
-        }
-        .confirmationDialog("'\(recipe.name)' を削除しますか?", isPresented: $showDeleteConfirm) {
-            Button("削除", role: .destructive, action: onDelete)
-        }
         .onAppear { tagText = recipe.tags.joined(separator: ", ") }
         .onChange(of: recipe.id) { _, _ in tagText = recipe.tags.joined(separator: ", ") }
+        .onChange(of: recipe) { _, _ in scheduleAutoSave() }
+        .onDisappear { autoSaveTask?.cancel() }
     }
 
     private var editorHeader: some View {
@@ -304,12 +376,22 @@ struct RecipeEditorView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(recipe.name.isEmpty ? "名称未設定の Recipe" : recipe.name)
                     .font(.title2.weight(.semibold))
-                Text(recipe.mode.displayName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.12), in: Capsule())
+                Button {
+                    model.activate(recipe)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .foregroundStyle(.tint)
+                }
+                .buttonStyle(.borderless)
+                .help("実行")
+                Button {
+                    recipe.favorite.toggle()
+                } label: {
+                    Image(systemName: recipe.favorite ? "star.fill" : "star")
+                        .foregroundStyle(recipe.favorite ? .yellow : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(recipe.favorite ? "お気に入りから外す" : "お気に入りに追加")
             }
             if let description = recipe.description, !description.isEmpty {
                 Text(description)
@@ -323,28 +405,37 @@ struct RecipeEditorView: View {
         }
     }
 
+    private func scheduleAutoSave() {
+        autoSaveTask?.cancel()
+        autoSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            onAutoSave()
+        }
+    }
+
     private var basics: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("Name") {
+            basicRow("Name") {
                 TextField("", text: $recipe.name).labelsHidden()
             }
-            LabeledContent("ID") {
+            basicRow("ID") {
                 TextField("", text: $recipe.id).labelsHidden()
                     .font(.system(.body, design: .monospaced))
             }
-            LabeledContent("Description") {
+            basicRow("Description") {
                 TextField("", text: Binding(
                     get: { recipe.description ?? "" },
                     set: { recipe.description = $0.isEmpty ? nil : $0 }
                 )).labelsHidden()
             }
-            LabeledContent("Category") {
+            basicRow("Category") {
                 TextField("", text: Binding(
                     get: { recipe.category ?? "" },
                     set: { recipe.category = $0.isEmpty ? nil : $0 }
                 )).labelsHidden()
             }
-            LabeledContent("Tags") {
+            basicRow("Tags") {
                 TextField("comma separated", text: $tagText)
                     .labelsHidden()
                     .onChange(of: tagText) { _, _ in
@@ -354,56 +445,254 @@ struct RecipeEditorView: View {
                             .filter { !$0.isEmpty }
                     }
             }
-            Toggle("Favorite", isOn: $recipe.favorite)
+        }
+    }
+
+    private func basicRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .frame(width: 92, alignment: .trailing)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var targetSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("クリックしたときの動作") {
-                Picker("", selection: $recipe.mode) {
-                    ForEach(ExecutionMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("デフォルトの動作")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 1) {
+                ForEach(ExecutionMode.allCases, id: \.self) { mode in
+                    Button {
+                        recipe.mode = mode
+                    } label: {
+                        Label(mode.editorDisplayName, systemImage: mode.editorIcon)
+                            .labelStyle(.titleAndIcon)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                            .foregroundStyle(recipe.mode == mode ? .white : .primary)
+                            .background(recipe.mode == mode ? Color.accentColor : .clear)
                     }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .help(mode.explanation)
+                    .accessibilityLabel(mode.editorDisplayName)
+                    .accessibilityAddTraits(recipe.mode == mode ? .isSelected : [])
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
             }
-            Text(recipe.mode.explanation).font(.caption2).foregroundStyle(.secondary)
+            .padding(1)
+            .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            Text(recipe.mode.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if recipe.mode == .submit, !recipe.arguments.isEmpty {
-                Text("引数が Clipboard や既定値で埋まらないときは、自動で「チャットに入力」になります。")
-                    .font(.caption2).foregroundStyle(.secondary)
+                Label("必要な入力が足りない場合は、チャットに入力してから送信します。", systemImage: "text.cursor")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup("詳細設定") {
-              VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("実行するセッション") {
-                Picker("", selection: $recipe.target.session) {
-                    ForEach(SessionPolicy.allCases, id: \.self) { policy in
-                        Text(policy.displayName).tag(policy)
+            if recipe.mode != .copy {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("送信先", systemImage: "paperplane")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Prompt を送る Herdr 上の Agent を、どのように決めるかを設定します。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    targetRow("Agent の選び方") {
+                        Picker("", selection: $recipe.target.session) {
+                            ForEach(SessionPolicy.allCases, id: \.self) { policy in
+                                Text(policy.displayName).tag(policy)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                    Text(recipe.target.session.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    targetRow("Herdr workspace") {
+                        Picker("", selection: workspaceSelection) {
+                            Text("指定なし").tag(WorkspaceChoice.none)
+                            Text("指定あり").tag(WorkspaceChoice.specified)
+                        }
+                        .labelsHidden()
+                    }
+                    if workspaceSelection.wrappedValue == .specified {
+                        targetRow("workspace 名") {
+                            HStack(spacing: 6) {
+                                TextField("AgentRecipes", text: workspaceNameBinding)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 200)
+                                Menu {
+                                    ForEach(model.workspaces) { workspace in
+                                        Button(workspace.displayName) {
+                                            recipe.target.workspaceID = workspace.id
+                                            recipe.target.workspaceName = workspace.displayName
+                                        }
+                                    }
+                                } label: {
+                                    Label("既存から選ぶ", systemImage: "list.bullet")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .disabled(model.workspaces.isEmpty)
+                            }
+                        }
+                        Text("その workspace の空き Agent だけを再利用します。同じ名前の workspace が無ければ、実行時に作成します。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if recipe.target.session == .reuseIfAvailable {
+                        reuseDestination
+                    }
+
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("ローカル作業フォルダ", systemImage: "folder")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Herdr workspace とは別の、Agent が作業するローカルのディレクトリ（cwd）です。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let project = model.project(for: recipe) {
+                            HStack(spacing: 8) {
+                                Label(project.name, systemImage: "folder.fill")
+                                    .font(.callout.weight(.medium))
+                                Text(project.path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 0)
+                                Button("変更…") { chooseWorkingDirectory() }
+                                Button("解除") {
+                                    recipe.target.projectID = nil
+                                    recipe.target.askProject = false
+                                }
+                            }
+                        } else {
+                            HStack(spacing: 8) {
+                                Text("指定なし")
+                                    .foregroundStyle(.secondary)
+                                Button("ディレクトリを選択…", systemImage: "folder.badge.plus") {
+                                    chooseWorkingDirectory()
+                                }
+                                .buttonStyle(.link)
+                            }
+                        }
+                        Text("再利用時は、同じ cwd の Agent だけを候補にします。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .labelsHidden()
-            }
-            Text(recipe.target.session.explanation).font(.caption2).foregroundStyle(.secondary)
-
-            LabeledContent("Project") {
-                Picker("", selection: Binding(
-                    get: { recipe.target.projectID ?? "" },
-                    set: { recipe.target.projectID = $0.isEmpty ? nil : $0 }
-                )) {
-                    Text("指定なし").tag("")
-                    ForEach(model.projects) { project in
-                        Text(project.name).tag(project.id)
+                if recipe.mode == .submit {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("結果の表示", systemImage: "rectangle.3.group")
+                            .font(.subheadline.weight(.semibold))
+                        LabeledContent("結果の形式") {
+                            Picker("", selection: $recipe.resultFormat) {
+                                ForEach(ResultFormat.allCases, id: \.self) { format in
+                                    Text(format.displayName).tag(format)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                        Text(recipe.resultFormat.explanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .labelsHidden()
+            } else {
+                Label("クリップボードへコピーするだけなので、実行先は設定しません。", systemImage: "clipboard")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Toggle("実行時に Project を選ぶ", isOn: $recipe.target.askProject)
+        }
+    }
 
-              }
-              .padding(.top, 6)
+    private var reuseDestination: some View {
+        let project = model.project(for: recipe)
+        let resolver = TargetResolver()
+        let candidate = resolver.rank(resolver.filter(
+            agents: model.agents,
+            target: recipe.target,
+            project: project,
+            agentKind: model.settings.agent
+        ))
+        .first { !$0.isWorking }
+
+        return Group {
+            if let candidate {
+                Label(
+                    "今回の再利用先: \(candidate.displayName)（\(candidate.status ?? "unknown")）",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .foregroundStyle(.tint)
+            } else {
+                Label(
+                    "再利用できる \(model.settings.agent.displayName) の Agent はありません。新しい Agent を起動します。",
+                    systemImage: "plus.circle"
+                )
+                .foregroundStyle(.secondary)
             }
+        }
+        .font(.caption)
+    }
+
+    private func chooseWorkingDirectory() {
+        if let added = model.addWorkingDirectory() {
+            recipe.target.askProject = false
+            recipe.target.projectID = added.id
+        }
+    }
+
+    private var workspaceSelection: Binding<WorkspaceChoice> {
+        Binding(
+            get: {
+                (recipe.target.workspaceID == nil && recipe.target.workspaceName == nil) ? .none : .specified
+            },
+            set: { selection in
+                switch selection {
+                case .specified:
+                    let workspace = model.workspaces.first
+                    recipe.target.workspaceID = workspace?.id
+                    recipe.target.workspaceName = workspace?.displayName ?? ""
+                case .none:
+                    recipe.target.workspaceID = nil
+                    recipe.target.workspaceName = nil
+                }
+            }
+        )
+    }
+
+    /// 自由入力。既存の workspace 名と一致すればその id も覚えておく。
+    private var workspaceNameBinding: Binding<String> {
+        Binding(
+            get: {
+                if let name = recipe.target.workspaceName { return name }
+                guard let id = recipe.target.workspaceID else { return "" }
+                return model.workspaces.first { $0.id == id }?.displayName ?? id
+            },
+            set: { name in
+                recipe.target.workspaceName = name
+                recipe.target.workspaceID = model.workspaces.first {
+                    $0.displayName.caseInsensitiveCompare(name) == .orderedSame
+                }?.id
+            }
+        )
+    }
+
+    private func targetRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .frame(width: 132, alignment: .trailing)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -444,7 +733,7 @@ struct RecipeEditorView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    recipe.arguments.append(ArgumentSpec(name: "arg\(recipe.arguments.count + 1)"))
+                    recipe.arguments.append(ArgumentSpec(name: nextArgumentName()))
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -455,25 +744,45 @@ struct RecipeEditorView: View {
                 Text("引数なし (選択すると即実行されます)").font(.caption).foregroundStyle(.secondary)
             }
 
+            Toggle("補足プロンプトを受け付ける", isOn: $recipe.acceptsAdditionalPrompt)
+            Text("明示した引数とは別に、Skill が判断材料として使える任意のテキストを渡せます。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             ForEach($recipe.arguments) { $argument in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        TextField("name", text: $argument.name)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(width: 130)
-                        TextField("label", text: Binding(
-                            get: { argument.label ?? "" },
-                            set: { argument.label = $0.isEmpty ? nil : $0 }
-                        ))
-                        Picker("", selection: $argument.type) {
-                            ForEach(ArgumentType.allCases, id: \.self) { type in
-                                Text(type.displayName).tag(type)
-                            }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Prompt の変数名")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            TextField("例: focus", text: $argument.name)
+                                .font(.system(.body, design: .monospaced))
                         }
-                        .labelsHidden()
+                        .frame(width: 130)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("フォームでの表示名")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            TextField("例: 確認項目", text: Binding(
+                                get: { argument.label ?? "" },
+                                set: { argument.label = $0.isEmpty ? nil : $0 }
+                            ))
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("形式")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Picker("", selection: $argument.type) {
+                                ForEach(ArgumentType.allCases, id: \.self) { type in
+                                    Text(type.displayName).tag(type)
+                                }
+                            }
+                            .labelsHidden()
+                        }
                         .frame(width: 110)
                         Button {
-                            recipe.arguments.removeAll { $0.name == argument.name }
+                            recipe.arguments.removeAll { $0.id == argument.id }
                         } label: {
                             Image(systemName: "trash")
                         }
@@ -482,10 +791,12 @@ struct RecipeEditorView: View {
                     HStack {
                         Toggle("必須", isOn: $argument.required)
                         Toggle("Clipboard を既定値に", isOn: $argument.useClipboardAsDefault)
-                        TextField("default", text: Binding(
-                            get: { argument.defaultValue ?? "" },
-                            set: { argument.defaultValue = $0.isEmpty ? nil : $0 }
-                        ))
+                        LabeledContent("既定値") {
+                            TextField("未指定", text: Binding(
+                                get: { argument.defaultValue ?? "" },
+                                set: { argument.defaultValue = $0.isEmpty ? nil : $0 }
+                            ))
+                        }
                     }
                     .font(.caption)
                 }
@@ -495,50 +806,10 @@ struct RecipeEditorView: View {
         }
     }
 
-    private var skillAndResultSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("Skill") {
-                Picker("", selection: Binding(
-                    get: { recipe.skill?.id ?? "" },
-                    set: { selectedID in
-                        guard !selectedID.isEmpty else {
-                            recipe.skill = nil
-                            return
-                        }
-                        guard let selected = model.skills.first(where: {
-                            "\($0.source):\($0.name)" == selectedID
-                        }) else { return }
-                        recipe.skill = SkillReference(name: selected.name, source: selected.source)
-                    }
-                )) {
-                    Text("指定なし").tag("")
-                    if let skill = recipe.skill,
-                       !model.skills.contains(where: { $0.name == skill.name && $0.source == skill.source }) {
-                        Text("\(skill.displayName) (見つかりません)").tag(skill.id)
-                    }
-                    ForEach(model.skills) { skill in
-                        Text("[\(skill.source)] \(skill.name)").tag("\(skill.source):\(skill.name)")
-                    }
-                }
-                .labelsHidden()
-            }
-            if model.skills.isEmpty {
-                Text("Skillが見つかりません。Settings > Skills で検索先を確認してください。")
-                    .font(.caption2).foregroundStyle(.secondary)
-            } else if let skill = recipe.skill, skill.source != model.settings.agent.rawValue {
-                Text("選択中のSkillは \(skill.source) 用です。現在のLLM（\(model.settings.agent.displayName)）にも同名Skillを配置してください。")
-                    .font(.caption2).foregroundStyle(.orange)
-            }
-
-            LabeledContent("結果の形式") {
-                Picker("", selection: $recipe.resultFormat) {
-                    ForEach(ResultFormat.allCases, id: \.self) { format in
-                        Text(format.displayName).tag(format)
-                    }
-                }
-                .labelsHidden()
-            }
-            Text(recipe.resultFormat.explanation).font(.caption2).foregroundStyle(.secondary)
-        }
+    private func nextArgumentName() -> String {
+        var index = 1
+        while recipe.arguments.contains(where: { $0.name == "arg\(index)" }) { index += 1 }
+        return "arg\(index)"
     }
+
 }

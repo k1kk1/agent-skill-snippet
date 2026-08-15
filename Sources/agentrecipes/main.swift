@@ -44,6 +44,7 @@ struct CLI {
             case "paste": return try execute(rest, forcedMode: .paste)
             case "submit": return try execute(rest, forcedMode: .submit)
             case "skills": return skills(rest)
+            case "mcp": return mcp(rest)
             case "agents": return agents()
             case "panes": return panes()
             case "workspaces": return workspaces()
@@ -124,7 +125,9 @@ struct CLI {
         let recipe = try resolveRecipe(id)
         let builder = PromptBuilder()
         var values = builder.initialValues(for: recipe)
-        for (key, value) in opts.namedValues(excluding: Options.reservedKeys) { values[key] = value }
+        let supplied = opts.recipeValues()
+        try validateArgumentNames(supplied, recipe: recipe)
+        for (key, value) in supplied { values[key] = value }
         print(builder.preview(recipe: recipe, userValues: values, project: project(for: recipe, opts: opts)))
         return 0
     }
@@ -136,8 +139,9 @@ struct CLI {
 
         let runner = makeRunner()
         var values = runner.initialValues(for: recipe)
-        for (key, value) in opts.namedValues(excluding: Options.reservedKeys) { values[key] = value }
-        values = values.filter { key, _ in recipe.arguments.contains { $0.name == key } }
+        let supplied = opts.recipeValues()
+        try validateArgumentNames(supplied, recipe: recipe)
+        for (key, value) in supplied { values[key] = value }
 
         let mode = forcedMode ?? opts.value("mode").flatMap(ExecutionMode.init(rawValue:)) ?? recipe.mode
         // --wait は Submit のときだけ意味がある (Paste/Copy は Agent を走らせない)。
@@ -178,27 +182,6 @@ struct CLI {
                 return printPaneOutput(agent: agent)
             }
             return 0
-
-        case .needsTarget(let prompt, let candidates, let reason):
-            // CLI では対話的に選ばせず、--agent で 1 件に決まる場合だけ送る。
-            if let wanted = opts.value("agent"),
-               let agent = candidates.first(where: { $0.id == wanted || $0.agentName == wanted }) {
-                let receipt = try runner.send(
-                    prompt: prompt, recipe: recipe, mode: mode, agent: agent,
-                    project: selectedProject, waitTimeoutMS: waitTimeout
-                )
-                print(receipt.notificationText)
-                if waitTimeout != nil { return printPaneOutput(agent: agent) }
-                return 0
-            }
-            fail(describe(reason))
-            guard !candidates.isEmpty else { return 1 }
-            print("候補:")
-            for agent in candidates {
-                print("  \(agent.id)  \(agent.displayName)  \(agent.status ?? "-")")
-            }
-            print("--agent <id> で送信先を指定してください。")
-            return 1
         }
     }
 
@@ -218,11 +201,10 @@ struct CLI {
         }
     }
 
-    private func describe(_ reason: TargetResolution.AskReason) -> String {
-        switch reason {
-        case .strategyIsAsk: return "この Recipe は送信先を毎回選ぶ設定です"
-        case .notFound: return "条件に合う Agent が見つかりません"
-        }
+    private func validateArgumentNames(_ values: [String: String], recipe: Recipe) throws {
+        let declared = Set(recipe.arguments.map(\.name))
+        let unknown = values.keys.filter { !declared.contains($0) }.sorted()
+        if !unknown.isEmpty { throw ArgumentError.unknown(unknown) }
     }
 
     // MARK: - Skills
@@ -271,6 +253,32 @@ struct CLI {
         print("")
         print("`agentrecipes skills --open <name>` で SKILL.md をエディタで開きます。")
         return 0
+    }
+
+    // MARK: - MCP
+
+    /// `<llm> mcp list` を実行して、MCP の接続状況を表示する。
+    /// Skill が MCP のツールを使う場合、未接続だと実行が途中で止まるため。
+    private func mcp(_ args: [String]) -> Int32 {
+        let opts = Options(args)
+        let kinds: [AgentKind] = opts.flag("all")
+            ? AgentKind.allCases
+            : [opts.positional.first.flatMap(AgentKind.init(rawValue:)) ?? settings.agent]
+        let cwd = settings.ensureDefaultWorkingDirectory()
+        let scanner = MCPScanner()
+        var failed = false
+        for kind in kinds {
+            let inspection = scanner.inspect(agent: kind, workingDirectory: cwd)
+            print("\(kind.displayName): \(inspection.summary)")
+            if let message = inspection.message { print("  \(message)") }
+            for server in inspection.servers {
+                print("  [\(server.state.displayName)] \(server.name)")
+            }
+            if inspection.hasFailure { failed = true }
+        }
+        print("")
+        print("作業ディレクトリ: \(cwd)")
+        return failed ? 1 : 0
     }
 
     // MARK: - Herdr
@@ -354,6 +362,8 @@ struct CLI {
             return 0
         }
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "MM-dd HH:mm"
         for entry in entries {
             let mark = entry.result == .success ? " " : "!"
@@ -391,6 +401,7 @@ struct CLI {
         RecipeRunner(
             client: makeClient(),
             agentKind: settings.agent,
+            defaultWorkingDirectory: settings.ensureDefaultWorkingDirectory(),
             history: HistoryRepository(layout: layout, limit: settings.historyLimit)
         )
     }
@@ -428,12 +439,13 @@ struct CLI {
         USAGE
           agentrecipes list [query] [--favorites] [--category <name>] [--json]
           agentrecipes show <recipe>
-          agentrecipes preview <recipe> [--<arg> <value> ...] [--project <name|path>]
-          agentrecipes run <recipe> [--<arg> <value> ...] [--mode copy|paste|submit]
+          agentrecipes preview <recipe> [--<arg> <value> ...] [--arg <name=value>] [--project <name|path>]
+          agentrecipes run <recipe> [--<arg> <value> ...] [--arg <name=value>] [--mode copy|paste|submit]
                                     [--project <name|path>] [--agent <id|kind>]
                                     [--wait] [--timeout <ms>]
           agentrecipes copy|paste|submit <recipe> [--<arg> <value> ...]
           agentrecipes skills [query] [--open <name>] [--json]
+          agentrecipes mcp [claude|codex|gemini] [--all]   # MCP の接続状況
           agentrecipes agents | panes | workspaces | status
           agentrecipes projects [--add <path> [--name <name>]]
           agentrecipes history [--limit <n>]
@@ -443,6 +455,7 @@ struct CLI {
         EXAMPLES
           agentrecipes run review-diff --project ComposerSketch
           agentrecipes run web-research --url https://example.com --focus "API仕様"
+          agentrecipes run example --arg mode=full  # 予約語と同名の引数
           agentrecipes copy review-clipboard
           agentrecipes submit web-research --wait        # 応答が終わるまで待って結果を表示
         """)
@@ -466,6 +479,7 @@ enum CLIError: LocalizedError {
 struct Options {
     private(set) var positional: [String] = []
     private var named: [String: String] = [:]
+    private var explicitArguments: [String: String] = [:]
     private var flags: Set<String> = []
 
     static let reservedKeys: Set<String> = [
@@ -477,6 +491,12 @@ struct Options {
         var index = 0
         while index < args.count {
             let token = args[index]
+            if token == "--arg", let raw = index + 1 < args.count ? args[index + 1] : nil,
+               let equals = raw.firstIndex(of: "="), equals != raw.startIndex {
+                explicitArguments[String(raw[..<equals])] = String(raw[raw.index(after: equals)...])
+                index += 2
+                continue
+            }
             if token.hasPrefix("--") {
                 let key = String(token.dropFirst(2))
                 let next = index + 1 < args.count ? args[index + 1] : nil
@@ -503,5 +523,12 @@ struct Options {
 
     func namedValues(excluding excluded: Set<String>) -> [String: String] {
         named.filter { !excluded.contains($0.key) }
+    }
+
+    /// `--arg name=value` は CLI の予約語と同名の Recipe 引数にも使える。
+    func recipeValues() -> [String: String] {
+        var values = namedValues(excluding: Self.reservedKeys)
+        for (key, value) in explicitArguments { values[key] = value }
+        return values
     }
 }

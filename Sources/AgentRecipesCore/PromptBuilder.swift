@@ -29,25 +29,45 @@ public struct PromptBuilder: Sendable {
     }
 
     /// 実行用。引数が足りなければ throw する。
-    public func build(recipe: Recipe, userValues: [String: String], project: Project?) throws -> String {
+    public func build(
+        recipe: Recipe,
+        userValues: [String: String],
+        project: Project?,
+        additionalPrompt: String = ""
+    ) throws -> String {
         let template = recipe.template
         guard !template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PromptError.emptyTemplate
         }
         var values = try arguments.resolve(recipe: recipe, userValues: userValues)
-        for (key, value) in variables.values(project: project) where values[key] == nil {
+        let needsClipboard = TemplateRenderer.placeholders(in: template).contains("clipboard")
+        for (key, value) in variables.values(project: project, includeClipboard: needsClipboard) where values[key] == nil {
             values[key] = value
         }
-        return decorate(TemplateRenderer.render(template, values: values), for: recipe)
+        return decorate(
+            TemplateRenderer.render(template, values: values),
+            for: recipe,
+            additionalPrompt: additionalPrompt
+        )
     }
 
     /// Preview 用。未入力の引数は空のままレンダリングする。
-    public func preview(recipe: Recipe, userValues: [String: String], project: Project?) -> String {
+    public func preview(
+        recipe: Recipe,
+        userValues: [String: String],
+        project: Project?,
+        additionalPrompt: String = ""
+    ) -> String {
         var values = userValues
-        for (key, value) in variables.values(project: project) where values[key] == nil {
+        let needsClipboard = TemplateRenderer.placeholders(in: recipe.template).contains("clipboard")
+        for (key, value) in variables.values(project: project, includeClipboard: needsClipboard) where values[key] == nil {
             values[key] = value
         }
-        return decorate(TemplateRenderer.render(recipe.template, values: values), for: recipe)
+        return decorate(
+            TemplateRenderer.render(recipe.template, values: values),
+            for: recipe,
+            additionalPrompt: additionalPrompt
+        )
     }
 
     /// Recipe が使っているが、引数にも Built-in にも無い変数。Editor の警告用。
@@ -58,12 +78,16 @@ public struct PromptBuilder: Sendable {
         }
     }
 
-    private func decorate(_ rendered: String, for recipe: Recipe) -> String {
+    private func decorate(_ rendered: String, for recipe: Recipe, additionalPrompt: String) -> String {
         var sections: [String] = []
         if let skill = recipe.skill {
             sections.append("この作業では `\(skill.name)` スキルを使用し、その SKILL.md の指示に従ってください。")
         }
         sections.append(rendered)
+        let supplemental = additionalPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if recipe.acceptsAdditionalPrompt, !supplemental.isEmpty {
+            sections.append("追加の指示:\n\(supplemental)")
+        }
         if recipe.resultFormat == .rich {
             sections.append(RichResultDocument.promptInstruction)
         }

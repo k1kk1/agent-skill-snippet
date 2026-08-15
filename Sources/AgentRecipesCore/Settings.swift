@@ -17,6 +17,15 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
 
     /// Herdr が agent 一覧で返す種別名。
     public var herdrKind: String { rawValue }
+
+    /// 一覧で LLM を表すアイコン (SF Symbols)。
+    public var symbolName: String {
+        switch self {
+        case .claude: return "sparkle"
+        case .codex: return "curlybraces"
+        case .gemini: return "diamond.fill"
+        }
+    }
 }
 
 public struct AppSettings: Codable, Hashable, Sendable {
@@ -44,9 +53,35 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var skillSources: [SkillSource]
     /// SKILL.md を開くエディタのコマンド。空なら OS の既定アプリ。
     public var editorCommand: String
+    /// Recipe に作業フォルダが無いときに、新しい Agent を起動する cwd。空なら `~/.agentrecipes`。
+    public var defaultWorkingDirectory: String
+
+    /// 未設定のときに使う作業ディレクトリ。
+    /// ホーム直下や Application Support（Recipe / 設定の保存先）を Agent の cwd にすると、
+    /// 無関係なファイルやアプリ自身のデータに手が届いてしまうため、専用の空ディレクトリを使う。
+    public static let fallbackWorkingDirectory = "~/.agentrecipes"
+
+    /// 実際に使う cwd。`~` を展開して返す。
+    public var expandedDefaultWorkingDirectory: String {
+        let path = defaultWorkingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = path.isEmpty ? AppSettings.fallbackWorkingDirectory : path
+        return (target as NSString).expandingTildeInPath
+    }
+
+    /// cwd が無いと Agent の起動に失敗するので、使う直前に作る。
+    @discardableResult
+    public func ensureDefaultWorkingDirectory() -> String {
+        let path = expandedDefaultWorkingDirectory
+        if !FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.createDirectory(
+                atPath: path, withIntermediateDirectories: true
+            )
+        }
+        return path
+    }
 
     public init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 3,
         launchAtLogin: Bool = false,
         notificationsEnabled: Bool = true,
         herdrExecutablePath: String = "",
@@ -58,7 +93,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         waitForResult: Bool = true,
         resultTimeoutSeconds: Int = 600,
         skillSources: [SkillSource] = SkillSource.defaults,
-        editorCommand: String = "code"
+        editorCommand: String = "code",
+        defaultWorkingDirectory: String = ""
     ) {
         self.schemaVersion = schemaVersion
         self.launchAtLogin = launchAtLogin
@@ -73,12 +109,13 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.resultTimeoutSeconds = resultTimeoutSeconds
         self.skillSources = skillSources
         self.editorCommand = editorCommand
+        self.defaultWorkingDirectory = defaultWorkingDirectory
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, launchAtLogin, notificationsEnabled, herdrExecutablePath
         case recipesDirectory, debugLogging, historyLimit, defaultMode, skillSources, editorCommand
-        case waitForResult, resultTimeoutSeconds, agent
+        case waitForResult, resultTimeoutSeconds, agent, defaultWorkingDirectory
     }
 
     public init(from decoder: Decoder) throws {
@@ -97,6 +134,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         resultTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .resultTimeoutSeconds) ?? d.resultTimeoutSeconds
         skillSources = try c.decodeIfPresent([SkillSource].self, forKey: .skillSources) ?? d.skillSources
         editorCommand = try c.decodeIfPresent(String.self, forKey: .editorCommand) ?? d.editorCommand
+        defaultWorkingDirectory = try c.decodeIfPresent(String.self, forKey: .defaultWorkingDirectory) ?? d.defaultWorkingDirectory
     }
 }
 
@@ -125,6 +163,7 @@ public final class SettingsRepository: @unchecked Sendable {
 /// Herdr とのやり取りを追うための最小限のログ。settings.debugLogging が有効なときだけ書く。
 public struct DebugLog: Sendable {
     private let url: URL?
+    private let maximumBytes = 1_000_000
 
     public init(layout: StorageLayout, enabled: Bool) {
         self.url = enabled ? layout.logFile : nil
@@ -134,12 +173,22 @@ public struct DebugLog: Sendable {
         guard let url else { return }
         let stamp = ISO8601DateFormatter().string(from: Date())
         let line = "[\(stamp)] \(message)\n"
+        trimIfNeeded(url)
         if let handle = try? FileHandle(forWritingTo: url) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: Data(line.utf8))
-        } else {
+        } else if !FileManager.default.fileExists(atPath: url.path) {
+            // 新規作成時だけ書く。既存ログを丸ごと上書きするフォールバックはしない。
             try? line.write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+
+    private func trimIfNeeded(_ url: URL) {
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+              size > maximumBytes,
+              let data = try? Data(contentsOf: url) else { return }
+        let retained = Data(data.suffix(maximumBytes / 2))
+        try? retained.write(to: url, options: .atomic)
     }
 }
