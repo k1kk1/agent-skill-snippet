@@ -184,20 +184,17 @@ private struct MCPSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("MCP 接続状況").font(.headline)
-                    Text("`<llm> mcp list` の結果です。作業ディレクトリ: \(model.settings.expandedDefaultWorkingDirectory)")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.head)
-                }
+                Text("MCP 接続状況").font(.headline)
                 Spacer()
                 if !model.mcpChecking.isEmpty { ProgressView().controlSize(.small) }
                 Button {
                     model.refreshMCP()
                 } label: {
-                    Label("再チェック", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
                 }
                 .disabled(!model.mcpChecking.isEmpty)
+                .help("再チェック")
+                .accessibilityLabel("MCP 接続状況を再チェック")
             }
 
             legend
@@ -216,16 +213,6 @@ private struct MCPSettings: View {
                                 Color.secondary.opacity(0.07),
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                             )
-                    }
-                    ForEach(AgentKind.allCases, id: \.self) { kind in
-                        if let inspection = model.mcp[kind], let message = inspection.message {
-                            Label("\(kind.displayName): \(message)", systemImage: "info.circle")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    if model.mcp[.codex]?.servers.isEmpty == false {
-                        Text("Codex は接続確認に対応していないため、設定されていれば「設定あり」として表示します。")
-                            .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -251,9 +238,6 @@ private struct MCPSettings: View {
                     }
                 }
             }
-            Spacer(minLength: 0)
-            Text("グレー = 未設定")
-                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 }
