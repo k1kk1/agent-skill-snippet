@@ -18,8 +18,27 @@ extension AgentKind {
         switch self {
         case .claude: return ["com.anthropic.claudefordesktop", "com.anthropic.claude"]
         case .codex: return ["com.openai.codex", "com.openai.chat"]
-        case .gemini: return ["com.google.gemini", "com.google.Gemini"]
+        // Gemini 単体の macOS アプリは無いので、同じ Google の Antigravity を代用する。
+        // どちらも無ければ下のフォールバック（4 芒星）で描く。
+        case .gemini: return [
+            "com.google.gemini", "com.google.Gemini",
+            "com.google.antigravity", "com.google.antigravity-ide",
+        ]
         }
+    }
+
+    /// 公式アプリが無いときのフォールバック配色。Gemini だけグラデーションにする。
+    var fallbackGradient: LinearGradient? {
+        guard self == .gemini else { return nil }
+        return LinearGradient(
+            colors: [
+                Color(red: 0.26, green: 0.52, blue: 0.96),
+                Color(red: 0.61, green: 0.45, blue: 0.80),
+                Color(red: 0.85, green: 0.40, blue: 0.44),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 }
 
@@ -72,6 +91,12 @@ struct AgentBrandIcon: View {
                 // 未設定の LLM はモノクロに落として、使えるものだけ目立たせる。
                 .grayscale(active ? 0 : 1)
                 .opacity(active ? 1 : 0.4)
+        } else if let gradient = kind.fallbackGradient {
+            // Gemini の 4 芒星。カラーのときだけブランド配色のグラデーションで描く。
+            Image(systemName: "sparkle")
+                .font(.system(size: size * 0.9))
+                .foregroundStyle(active ? AnyShapeStyle(gradient) : AnyShapeStyle(Color.secondary.opacity(0.35)))
+                .frame(width: size, height: size)
         } else {
             Image(systemName: kind.symbolName)
                 .font(.system(size: size * 0.85))

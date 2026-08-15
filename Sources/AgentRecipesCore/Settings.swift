@@ -23,7 +23,7 @@ public enum AgentKind: String, Codable, CaseIterable, Sendable {
         switch self {
         case .claude: return "sparkle"
         case .codex: return "curlybraces"
-        case .gemini: return "diamond.fill"
+        case .gemini: return "sparkle"
         }
     }
 }
