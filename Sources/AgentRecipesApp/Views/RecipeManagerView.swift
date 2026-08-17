@@ -315,7 +315,7 @@ private struct ManagerRecipeRow: View {
                 .foregroundStyle(recipe.skill == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 .frame(width: 14)
                 .help(recipe.skill.map { "Agent Skill: \($0.displayName)" } ?? recipe.mode.explanation)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(recipe.name)
                     .lineLimit(1)
                 if let description = recipe.description, !description.isEmpty {
@@ -324,6 +324,8 @@ private struct ManagerRecipeRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                // 必要な入力の種類。詳細はツールチップで読める。
+                RecipeInputBadges(recipe: recipe, compact: true)
             }
             Spacer(minLength: 4)
             if recipe.favorite {

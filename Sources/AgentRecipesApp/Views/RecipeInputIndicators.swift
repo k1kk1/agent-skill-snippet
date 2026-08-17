@@ -62,7 +62,6 @@ struct RecipeInputBadges: View {
             compactSlot(
                 ArgumentType.string.symbolName,
                 label: ArgumentType.string.displayName,
-                tint: .blue,
                 state: argumentTypes.contains(.string)
                     ? .active
                     : (recipe.acceptsAdditionalPrompt ? .inactive : .hidden)
@@ -70,19 +69,16 @@ struct RecipeInputBadges: View {
             compactSlot(
                 ArgumentType.multiline.symbolName,
                 label: ArgumentType.multiline.displayName,
-                tint: .blue,
                 state: argumentTypes.contains(.multiline) ? .active : .hidden
             )
             compactSlot(
                 ArgumentType.url.symbolName,
                 label: ArgumentType.url.displayName,
-                tint: .blue,
                 state: argumentTypes.contains(.url) ? .active : .hidden
             )
             compactSlot(
                 "doc.on.clipboard",
                 label: "Clipboard",
-                tint: .purple,
                 state: usesClipboard ? .active : .hidden
             )
             compactSlot(
@@ -90,27 +86,27 @@ struct RecipeInputBadges: View {
                 label: recipe.needsUserInput
                     ? "フォーム入力が必要"
                     : (canOpenForm ? "フォームで上書き可能（⌥クリック）" : "フォーム入力なし"),
-                tint: .orange,
                 state: recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
             )
         }
     }
 
-    private func compactSlot(_ symbol: String, label: String, tint: Color, state: CompactState) -> some View {
+    /// 色は 3 段階だけにして、行が騒がしくならないようにする。
+    /// 使う = オレンジ / 使えるが今回は使わない = 白 / 対象外 = グレー。
+    private func compactSlot(_ symbol: String, label: String, state: CompactState) -> some View {
         Image(systemName: symbol)
             .font(.caption2.weight(.medium))
-            .foregroundStyle(foregroundColor(for: state, activeTint: tint))
+            .foregroundStyle(color(for: state))
             .frame(width: 11, height: 14)
-            .opacity(state == .active ? 1 : (state == .inactive ? 0.85 : 0.35))
             .help(label)
             .accessibilityHidden(true)
     }
 
-    private func foregroundColor(for state: CompactState, activeTint: Color) -> Color {
+    private func color(for state: CompactState) -> Color {
         switch state {
-        case .active: return activeTint
+        case .active: return .orange
         case .inactive: return .primary
-        case .hidden: return .secondary
+        case .hidden: return Color.secondary.opacity(0.35)
         }
     }
 
