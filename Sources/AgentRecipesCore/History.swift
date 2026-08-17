@@ -6,6 +6,26 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     public enum Result: String, Codable, Sendable {
         case success
         case failure
+        /// 送れてはいないが失敗でもない状態。
+        /// 起動時の確認 (フォルダの信頼など) で Agent が止まっているケース。
+        case pending
+
+        public var displayName: String {
+            switch self {
+            case .success: return "成功"
+            case .failure: return "失敗"
+            case .pending: return "確認待ち"
+            }
+        }
+
+        /// 一覧の先頭に出す記号。
+        public var marker: String {
+            switch self {
+            case .success: return " "
+            case .failure: return "!"
+            case .pending: return "?"
+            }
+        }
     }
 
     public var id: UUID

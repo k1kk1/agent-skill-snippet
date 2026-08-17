@@ -162,7 +162,8 @@ public struct RecipeRunner: Sendable {
         )
         record(
             recipe: recipe, mode: mode, project: project, agent: agent,
-            result: delivered ? .success : .failure,
+            // 送れていない場合は失敗ではなく「確認待ち」。答えれば続行できる。
+            result: delivered ? .success : .pending,
             message: receipt.notificationText
         )
         return receipt

@@ -454,7 +454,8 @@ final class RecipeRunnerTests: XCTestCase {
         XCTAssertEqual(receipt.prompt, "本文")
         XCTAssertFalse(fake.invocations.contains { $0.arguments.prefix(2) == ["agent", "prompt"] })
         XCTAssertTrue(receipt.notificationText.contains("起動時の確認"))
-        XCTAssertEqual(history.recent().first?.result, .failure)
+        // 失敗ではなく「確認待ち」として残す。答えれば続けられる。
+        XCTAssertEqual(history.recent().first?.result, .pending)
     }
 
     /// 送ったのに画面へ入っていなければ、1 度だけ送り直す (MCP のロード中など)。

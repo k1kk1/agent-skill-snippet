@@ -353,22 +353,31 @@ private struct RichTableView: View {
     let columns: [String]
     let rows: [[String]]
 
+    /// 幅は固定して折り返す。可変にすると 1 列が伸びて窓からはみ出す。
+    private func width(for index: Int) -> CGFloat {
+        index == 0 ? 120 : 200
+    }
+
     var body: some View {
         if columns.isEmpty {
             Text("表データがありません").foregroundStyle(.secondary)
         } else {
-            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
                 GridRow {
-                    ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
-                        tableCell(column, header: true)
+                    ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
+                        tableCell(column, width: width(for: index), header: true)
                     }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)
                 ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                     GridRow {
                         ForEach(columns.indices, id: \.self) { columnIndex in
-                            tableCell(columnIndex < row.count ? row[columnIndex] : "", header: false)
-                                .background(rowIndex.isMultiple(of: 2) ? Color.clear : Color.secondary.opacity(0.05))
+                            tableCell(
+                                columnIndex < row.count ? row[columnIndex] : "",
+                                width: width(for: columnIndex),
+                                header: false
+                            )
+                            .background(rowIndex.isMultiple(of: 2) ? Color.clear : Color.secondary.opacity(0.05))
                         }
                     }
                 }
@@ -378,10 +387,11 @@ private struct RichTableView: View {
         }
     }
 
-    private func tableCell(_ value: String, header: Bool) -> some View {
+    private func tableCell(_ value: String, width: CGFloat, header: Bool) -> some View {
         Text(value)
-            .font(header ? .headline : .callout)
-            .frame(minWidth: 100, maxWidth: 260, alignment: .leading)
+            .font(header ? .subheadline.weight(.semibold) : .callout)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(width: width, alignment: .topLeading)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(header ? Color.secondary.opacity(0.12) : Color.clear)

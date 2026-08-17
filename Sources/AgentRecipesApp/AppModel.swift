@@ -97,10 +97,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// この時間を過ぎた結果は古いとみなして調べ直す。
+    static let mcpFreshness: TimeInterval = 10 * 60
+
     /// MCP の接続状況を調べ直す。CLI の health check を待つので数秒かかる。
-    /// - Parameter agent: nil ならすべての LLM。
-    func refreshMCP(agent: AgentKind? = nil) {
-        let targets = agent.map { [$0] } ?? AgentKind.allCases
+    /// - Parameters:
+    ///   - agent: nil ならすべての LLM。
+    ///   - force: 直近の結果があっても調べ直す (再チェックボタン用)。
+    func refreshMCP(agent: AgentKind? = nil, force: Bool = false) {
+        let targets = (agent.map { [$0] } ?? AgentKind.allCases).filter { kind in
+            guard !force, let checkedAt = mcp[kind]?.checkedAt else { return true }
+            return Date().timeIntervalSince(checkedAt) > Self.mcpFreshness
+        }
+        guard !targets.isEmpty else { return }
         // MCP 設定は cwd 依存なので、Agent を起動するのと同じディレクトリで調べる。
         let cwd = settings.ensureDefaultWorkingDirectory()
         for kind in targets where !mcpChecking.contains(kind) {

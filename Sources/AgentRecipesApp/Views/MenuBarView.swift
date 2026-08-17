@@ -41,8 +41,8 @@ struct MenuBarView: View {
             model.reload()
             model.refreshClipboardSnapshot()
             model.refreshHerdr()
-            // 直近の結果が無いときだけ調べる (health check に数秒かかるため)。
-            if model.mcp.isEmpty { model.refreshMCP() }
+            // 結果が古いときだけ調べ直す (health check に数秒かかるため)。
+            model.refreshMCP()
             searchFocused = true
         }
     }

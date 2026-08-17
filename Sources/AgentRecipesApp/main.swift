@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resignActiveObserver: NSObjectProtocol?
     private var outsideClickMonitor: Any?
     private var appWindowClickMonitor: Any?
+    private var visibilityObservers: [NSObjectProtocol] = []
+    private var hasWarnedAboutHiddenStatusItem = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let model = AppModel()
@@ -74,6 +76,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.warnIfStatusItemIsHidden()
         }
+        observeStatusItemVisibility()
+    }
+
+    /// 起動後にメニューバーが埋まってアイコンが押し出されることもあるので、
+    /// 画面構成の変更・スリープ復帰・アプリ切り替えのあとにも見直す。
+    private func observeStatusItemVisibility() {
+        let center = NotificationCenter.default
+        for name in [
+            NSApplication.didChangeScreenParametersNotification,
+            NSApplication.didBecomeActiveNotification,
+        ] {
+            visibilityObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.recheckStatusItemVisibility() }
+            })
+        }
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        visibilityObservers.append(
+            workspaceCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.recheckStatusItemVisibility() }
+            }
+        )
+    }
+
+    /// 見えなくなった瞬間だけ知らせる。見えている間に何度も出さない。
+    private func recheckStatusItemVisibility() {
+        guard !isStatusItemVisible() else {
+            hasWarnedAboutHiddenStatusItem = false
+            return
+        }
+        guard !hasWarnedAboutHiddenStatusItem else { return }
+        warnIfStatusItemIsHidden()
     }
 
     /// ステータス項目がノッチの下など、見えない位置に置かれていないか判定する。
@@ -92,7 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func warnIfStatusItemIsHidden() {
-        guard !isStatusItemVisible() else { return }
+        guard !isStatusItemVisible() else {
+            hasWarnedAboutHiddenStatusItem = false
+            return
+        }
+        hasWarnedAboutHiddenStatusItem = true
         NSLog("AgentRecipes: status item is hidden behind the notch (frame=\(statusItem?.button?.window?.frame ?? .zero))")
 
         let alert = NSAlert()

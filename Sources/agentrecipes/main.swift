@@ -366,7 +366,7 @@ struct CLI {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "MM-dd HH:mm"
         for entry in entries {
-            let mark = entry.result == .success ? " " : "!"
+            let mark = entry.result.marker
             print("\(mark) \(formatter.string(from: entry.timestamp))  \(entry.recipeName)  \(entry.project ?? "-")  \(entry.agent ?? "-")  \(entry.mode.rawValue)")
         }
         return 0

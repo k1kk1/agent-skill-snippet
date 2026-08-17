@@ -189,7 +189,7 @@ private struct MCPSettings: View {
                 Spacer()
                 if !model.mcpChecking.isEmpty { ProgressView().controlSize(.small) }
                 Button {
-                    model.refreshMCP()
+                    model.refreshMCP(force: true)
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -219,7 +219,8 @@ private struct MCPSettings: View {
             }
         }
         .padding(16)
-        .onAppear { if model.mcp.isEmpty { model.refreshMCP() } }
+        // 古い結果なら開いたときに取り直す (10 分以内はそのまま使う)。
+        .onAppear { model.refreshMCP() }
     }
 
     /// アイコンの読み方。カラー = その LLM で使える。
@@ -418,6 +419,14 @@ private struct HistorySettings: View {
         return f
     }()
 
+    private func color(for result: HistoryEntry.Result) -> Color {
+        switch result {
+        case .success: return .secondary
+        case .pending: return .yellow
+        case .failure: return .orange
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading) {
             Table(entries) {
@@ -427,9 +436,9 @@ private struct HistorySettings: View {
                 TableColumn("Agent") { Text($0.agent ?? "-") }.width(80)
                 TableColumn("Mode") { Text($0.mode.displayName) }.width(70)
                 TableColumn("Result") { entry in
-                    Text(entry.result.rawValue)
-                        .foregroundStyle(entry.result == .success ? Color.secondary : Color.orange)
-                }.width(70)
+                    Text(entry.result.displayName)
+                        .foregroundStyle(color(for: entry.result))
+                }.width(80)
             }
 
             HStack {
