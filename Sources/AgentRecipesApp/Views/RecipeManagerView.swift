@@ -57,11 +57,21 @@ struct RecipeManagerView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            searchField
+            Divider()
             List(selection: Binding(get: { selectedItem }, set: { requestSelection($0) })) {
-                if !visibleSkills.isEmpty {
+                if !favorites.isEmpty {
+                    Section("Favorites") {
+                        ForEach(favorites) { recipe in
+                            ManagerRecipeRow(recipe: recipe)
+                                .tag(SidebarItem.recipe(recipe.id))
+                        }
+                    }
+                }
+                if !unconfiguredSkills.isEmpty {
                     Section("Agent Skills") {
-                        ForEach(visibleSkills) { skill in
-                            ManagerSkillRow(skill: skill, recipe: recipe(for: skill))
+                        ForEach(unconfiguredSkills) { skill in
+                            ManagerSkillRow(skill: skill, recipe: nil)
                                 .tag(SidebarItem.skill(skill.id))
                         }
                     }
@@ -75,7 +85,6 @@ struct RecipeManagerView: View {
                     }
                 }
             }
-            .searchable(text: $filter, placement: .sidebar)
 
             Divider()
             HStack {
@@ -95,6 +104,32 @@ struct RecipeManagerView: View {
         .navigationSplitViewColumnWidth(min: 320, ideal: 340, max: 400)
     }
 
+    /// リストの上に固定する検索欄。
+    /// `.searchable(placement: .sidebar)` はスクロールした行が透けて重なるため、自前で置く。
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search", text: $filter)
+                .textFieldStyle(.plain)
+            if !filter.isEmpty {
+                Button {
+                    filter = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.secondary.opacity(0.25)))
+        .padding(10)
+        // サイドバーの素材越しに行が透けないよう、不透明な背景を敷く。
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
     private var visibleRecipes: [Recipe] {
         let query = filter.trimmingCharacters(in: .whitespaces)
         return query.isEmpty ? model.recipes : model.recipes.filter { $0.matches(query) }
@@ -105,19 +140,28 @@ struct RecipeManagerView: View {
         return query.isEmpty ? model.skills : model.skills.filter { $0.matches(query) }
     }
 
-    private var standaloneRecipes: [Recipe] {
-        visibleRecipes.filter { $0.skill == nil }
+    private var favorites: [Recipe] {
+        visibleRecipes.filter(\.favorite).sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    /// まだ Recipe を持たない Skill。設定済みの Skill は Recipe としてカテゴリに並ぶ。
+    private var unconfiguredSkills: [DiscoveredSkill] {
+        visibleSkills.filter { recipe(for: $0) == nil }
     }
 
     private var groupedCategories: [String] {
-        Array(Set(standaloneRecipes.map { $0.category ?? "" })).sorted { lhs, rhs in
+        Array(Set(visibleRecipes.map { $0.category ?? "" })).sorted { lhs, rhs in
             if lhs.isEmpty != rhs.isEmpty { return !lhs.isEmpty }
             return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
         }
     }
 
     private func recipes(in category: String) -> [Recipe] {
-        standaloneRecipes.filter { ($0.category ?? "") == category }
+        visibleRecipes
+            .filter { ($0.category ?? "") == category }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private func toggleSidebar() {
@@ -144,11 +188,9 @@ struct RecipeManagerView: View {
 
     private func selectInitialRecipeIfNeeded() {
         guard selectedItem == nil else { return }
-        let initial = standaloneRecipes.sorted { lhs, rhs in
+        let initial = visibleRecipes.sorted { lhs, rhs in
             if lhs.favorite != rhs.favorite { return lhs.favorite && !rhs.favorite }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }.first ?? model.recipes.sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }.first
         loadRecipe(id: initial?.id)
     }
@@ -160,10 +202,8 @@ struct RecipeManagerView: View {
         }
         model.save(draft, originalID: originalID)
         originalID = draft.id
-        // Skill 行から開いている場合は、保存しても選択を Skill 行に残す。
-        if case .skill = selectedItem {} else {
-            selectedItem = .recipe(draft.id)
-        }
+        // 保存すると Skill 行はカテゴリ内の Recipe 行に変わるので、選択もそちらへ移す。
+        selectedItem = .recipe(draft.id)
         self.draft = draft
         if showToast {
             ToastPresenter.shared.show(Toast(message: "'\(draft.name)' を保存しました", isError: false))
@@ -249,6 +289,13 @@ private struct ManagerRecipeRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            // Skill から作った Recipe は、カテゴリに並んでも由来が分かるようにする。
+            if let skill = recipe.skill {
+                Image(systemName: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.tint)
+                    .help("Agent Skill: \(skill.displayName)")
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(recipe.name)
                     .lineLimit(1)
