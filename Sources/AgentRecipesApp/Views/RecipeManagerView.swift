@@ -112,14 +112,15 @@ struct RecipeManagerView: View {
                 .foregroundStyle(.secondary)
             TextField("Search", text: $filter)
                 .textFieldStyle(.plain)
-            if !filter.isEmpty {
-                Button {
-                    filter = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+            // 入力の有無でボタンが出入りすると文字位置がずれるので、場所は常に確保する。
+            Button {
+                filter = ""
+            } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
+            .opacity(filter.isEmpty ? 0 : 1)
+            .disabled(filter.isEmpty)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -756,9 +757,13 @@ struct RecipeEditorView: View {
                 .frame(minHeight: 200)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
 
+            // 入力のたびに警告行が出入りすると、編集中にレイアウトが動いてしまう。
+            // 行の高さは常に確保しておき、中身だけ切り替える。
             let undeclared = PromptBuilder.undeclaredVariables(in: recipe)
-            if !undeclared.isEmpty {
-                HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                if undeclared.isEmpty {
+                    Text(" ").font(.caption)
+                } else {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text("未定義の変数: \(undeclared.joined(separator: ", "))").font(.caption)
                     Button("引数として追加") {
@@ -768,7 +773,9 @@ struct RecipeEditorView: View {
                     }
                     .buttonStyle(.link)
                 }
+                Spacer(minLength: 0)
             }
+            .frame(height: 18)
         }
     }
 

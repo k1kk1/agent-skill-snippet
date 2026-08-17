@@ -59,14 +59,15 @@ struct MenuBarView: View {
                         model.activate($0)
                     }
                 }
-            if !model.searchText.isEmpty {
-                Button {
-                    model.searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+            // 入力の有無でボタンが出入りすると文字位置がずれるので、場所は常に確保する。
+            Button {
+                model.searchText = ""
+            } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
             }
+            .buttonStyle(.plain)
+            .opacity(model.searchText.isEmpty ? 0 : 1)
+            .disabled(model.searchText.isEmpty)
         }
         .padding(10)
     }
