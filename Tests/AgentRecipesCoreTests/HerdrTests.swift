@@ -30,10 +30,24 @@ final class FakeHerdrRunner: HerdrCommandRunning, @unchecked Sendable {
         }
         if let exact = responses[arguments.joined(separator: " ")] { return exact }
         if let sub = responses[arguments.prefix(2).joined(separator: " ")] { return sub }
+        // 素直な Agent の代役。pane read には直前に送られた Prompt を返す。
+        if arguments.prefix(2) == ["pane", "read"], let prompt = lastPrompt {
+            return HerdrCommandResult(exitCode: 0, standardOutput: "❯ \(prompt)", standardError: "")
+        }
         return defaultResult
     }
 
+    /// 直近の `agent prompt` に渡した本文。
+    var lastPrompt: String? {
+        invocations.last { $0.arguments.prefix(2) == ["agent", "prompt"] }?.arguments.dropFirst(3).first
+    }
+
     var lastArguments: [String] { invocations.last?.arguments ?? [] }
+
+    /// 直近の `agent prompt` 呼び出し。
+    var lastPromptInvocation: [String] {
+        invocations.last { $0.arguments.prefix(2) == ["agent", "prompt"] }?.arguments ?? []
+    }
 }
 
 private func makeClient(_ runner: FakeHerdrRunner) -> HerdrClient {
@@ -393,7 +407,8 @@ final class RecipeRunnerTests: XCTestCase {
         let outcome = try runner.run(recipe: recipe, values: [:], project: nil)
 
         guard case .completed(let receipt) = outcome else { return XCTFail("completed のはず") }
-        XCTAssertEqual(fake.lastArguments, ["agent", "prompt", "w1:p1", "レビューしてください"])
+        // 送ったあとに届いたかを確かめる (pane read) ので、prompt は最後の呼び出しではない。
+        XCTAssertEqual(fake.lastPromptInvocation, ["agent", "prompt", "w1:p1", "レビューしてください"])
         XCTAssertEqual(receipt.notificationText, "Review Diff — Sent to ComposerSketch / Codex")
         XCTAssertEqual(history.recent().first?.agent, "codex")
     }
@@ -416,6 +431,73 @@ final class RecipeRunnerTests: XCTestCase {
         XCTAssertEqual(commands, ["agent list", "pane send-text", "agent focus"])
         XCTAssertEqual(fake.invocations[1].arguments, ["pane", "send-text", "w1:p1", "text"])
         XCTAssertEqual(receipt.notificationText, "Paste Me — Pasted to ComposerSketch / Codex")
+    }
+
+    /// 起動時の確認 (フォルダの信頼など) で止まっている Agent には送らない。
+    /// 送るとダイアログの選択肢に文字を打ち込むことになり、Prompt が消える。
+    func testBlockedAgentIsNotPrompted() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agents":[{"pane_id":"w1:p1","agent":"codex","agent_status":"blocked"}]}}"#,
+            standardError: ""
+        )
+        let (runner, history) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "b", name: "Blocked", mode: .submit,
+            target: TargetSpec(session: .reuseIfAvailable), body: "本文"
+        )
+        let outcome = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        guard case .completed(let receipt) = outcome else { return XCTFail("completed のはず") }
+        XCTAssertFalse(receipt.promptDelivered)
+        XCTAssertEqual(receipt.prompt, "本文")
+        XCTAssertFalse(fake.invocations.contains { $0.arguments.prefix(2) == ["agent", "prompt"] })
+        XCTAssertTrue(receipt.notificationText.contains("起動時の確認"))
+        XCTAssertEqual(history.recent().first?.result, .failure)
+    }
+
+    /// 送ったのに画面へ入っていなければ、1 度だけ送り直す (MCP のロード中など)。
+    func testDroppedPromptIsSentAgainOnce() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = agentListResult()
+        fake.responses["agent get"] = HerdrCommandResult(
+            exitCode: 0,
+            standardOutput: #"{"result":{"agent":{"pane_id":"w1:p1","agent":"codex","agent_status":"idle","interactive_ready":true}}}"#,
+            standardError: ""
+        )
+        // 1 回目の確認では何も映っておらず、2 回目で届いたことが分かる。
+        fake.responseSequences["pane read"] = [
+            HerdrCommandResult(exitCode: 0, standardOutput: "起動中…", standardError: ""),
+            HerdrCommandResult(exitCode: 0, standardOutput: "❯ 本文です", standardError: ""),
+        ]
+        let (runner, _) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "r", name: "Retry", mode: .submit,
+            target: TargetSpec(session: .reuseIfAvailable), body: "本文です"
+        )
+        let outcome = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        guard case .completed(let receipt) = outcome else { return XCTFail("completed のはず") }
+        XCTAssertTrue(receipt.promptDelivered)
+        XCTAssertEqual(fake.invocations.filter { $0.arguments.prefix(2) == ["agent", "prompt"] }.count, 2)
+    }
+
+    /// 画面を読めないときは送り直さない (二重実行を避ける)。
+    func testUnreadablePaneDoesNotResend() throws {
+        let fake = FakeHerdrRunner()
+        fake.responses["agent list"] = agentListResult()
+        fake.responses["pane read"] = HerdrCommandResult(exitCode: 0, standardOutput: "", standardError: "")
+        let (runner, _) = runner(fake, clipboard: FakeClipboard())
+        let recipe = Recipe(
+            id: "u", name: "Unreadable", mode: .submit,
+            target: TargetSpec(session: .reuseIfAvailable), body: "本文です"
+        )
+        let outcome = try runner.run(recipe: recipe, values: [:], project: nil)
+
+        guard case .completed(let receipt) = outcome else { return XCTFail("completed のはず") }
+        XCTAssertTrue(receipt.promptDelivered)
+        XCTAssertEqual(fake.invocations.filter { $0.arguments.prefix(2) == ["agent", "prompt"] }.count, 1)
     }
 
     /// 指定した名前の workspace がまだ無ければ、その名前で作る。
@@ -569,7 +651,7 @@ final class RecipeRunnerTests: XCTestCase {
         // agent get は「TUI が入力を受け付けられるか」の確認。
         XCTAssertEqual(
             commands,
-            ["agent list", "workspace list", "workspace create", "agent start", "agent wait", "agent get", "agent prompt"]
+            ["agent list", "workspace list", "workspace create", "agent start", "agent wait", "agent get", "agent prompt", "pane read"]
         )
         XCTAssertEqual(
             fake.invocations[2].arguments,
@@ -579,7 +661,7 @@ final class RecipeRunnerTests: XCTestCase {
             fake.invocations[3].arguments,
             ["agent", "start", "codex-w2-p1", "--kind", "codex", "--pane", "w2:p1"]
         )
-        XCTAssertEqual(fake.lastArguments, ["agent", "prompt", "w2:p1", "はじめまして"])
+        XCTAssertEqual(fake.lastPromptInvocation, ["agent", "prompt", "w2:p1", "はじめまして"])
         XCTAssertTrue(receipt.startedNewAgent)
         XCTAssertEqual(receipt.notificationText, "New Agent Run — Sent to music-db / Codex (new)")
         XCTAssertEqual(history.recent().first?.result, .success)
@@ -621,7 +703,7 @@ final class RecipeRunnerTests: XCTestCase {
             ["tab", "create", "--no-focus", "--workspace", "w2", "--label", "codex"]
         )
         XCTAssertEqual(fake.invocations.filter { $0.arguments.prefix(2) == ["agent", "start"] }.count, 2)
-        XCTAssertEqual(fake.lastArguments, ["agent", "prompt", "w1:pA", "hello"])
+        XCTAssertEqual(fake.lastPromptInvocation, ["agent", "prompt", "w1:pA", "hello"])
     }
 
     func testStartNewUsesSelectedWorkspace() throws {

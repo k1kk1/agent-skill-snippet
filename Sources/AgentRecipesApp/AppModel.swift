@@ -308,7 +308,12 @@ final class AppModel: ObservableObject {
         PanelPresenter.shared.closeRunForm()
         clearPending(pendingID)
 
-        guard waited, let agent = receipt.agent else {
+        guard let agent = receipt.agent else {
+            if notify { ToastPresenter.shared.show(Toast(message: receipt.notificationText, isError: false)) }
+            return
+        }
+        // 起動時の確認で止まっている場合は、待つ設定でなくても結果ウィンドウを出して答えてもらう。
+        guard waited || !receipt.promptDelivered else {
             if notify { ToastPresenter.shared.show(Toast(message: receipt.notificationText, isError: false)) }
             return
         }
@@ -319,16 +324,25 @@ final class AppModel: ObservableObject {
             let result = RunResult(
                 recipeName: receipt.recipeName,
                 agent: agent,
-                output: RunResult.trimToLastAnswer(output)
+                output: RunResult.trimToLastAnswer(output),
+                pendingPrompt: receipt.promptDelivered ? nil : receipt.prompt
             )
             self.result = result
             PanelPresenter.shared.showResult(model: self)
             if notify {
                 // 確認待ちで止まっている場合は、完了と伝えない。
-                let message = result.question == nil
-                    ? "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました"
-                    : "\(receipt.recipeName) — \(agent.displayName) が確認を求めています"
-                ToastPresenter.shared.show(Toast(message: message, isError: result.question != nil))
+                let message: String
+                if !receipt.promptDelivered {
+                    message = "\(receipt.recipeName) — 起動時の確認に答えると送信します"
+                } else if result.question != nil {
+                    message = "\(receipt.recipeName) — \(agent.displayName) が確認を求めています"
+                } else {
+                    message = "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました"
+                }
+                ToastPresenter.shared.show(Toast(
+                    message: message,
+                    isError: !receipt.promptDelivered || result.question != nil
+                ))
             }
         }
     }
@@ -353,9 +367,12 @@ final class AppModel: ObservableObject {
     private func sendToAgent(result: RunResult, _ action: @escaping @Sendable (HerdrClient) throws -> Void) {
         let client = makeClient()
         let timeoutMS = settings.resultTimeoutSeconds * 1000
+        // 起動時の確認で送れていない Prompt があれば、答えたあとに続けて送る。
+        let pending = result.pendingPrompt
+        let notify = settings.notificationsEnabled
         isAnswering = true
         Task {
-            let output = await HerdrBackground.run { () -> String? in
+            let outcome = await HerdrBackground.run { () -> (output: String, sentPending: Bool)? in
                 do {
                     try action(client)
                 } catch {
@@ -363,18 +380,33 @@ final class AppModel: ObservableObject {
                 }
                 // 答えたあとの続きを待ってから読む。待てなくても読み直しはする。
                 _ = client.waitForAgent(target: result.agent.id, timeoutMS: timeoutMS)
-                return (try? client.readPane(result.agent.paneID, lines: 200)) ?? ""
+                var sentPending = false
+                if let pending {
+                    let agent = client.waitUntilInteractive(target: result.agent.id)
+                    if (agent?.status ?? "").lowercased() != "blocked" {
+                        try? client.promptAgent(pending, target: result.agent.id, waitTimeoutMS: timeoutMS)
+                        sentPending = true
+                    }
+                }
+                return ((try? client.readPane(result.agent.paneID, lines: 200)) ?? "", sentPending)
             }
             self.isAnswering = false
-            guard let output else {
+            guard let outcome else {
                 ToastPresenter.shared.show(Toast(message: "Agent へ送信できませんでした", isError: true))
                 return
             }
             self.result = RunResult(
                 recipeName: result.recipeName,
                 agent: result.agent,
-                output: RunResult.trimToLastAnswer(output)
+                output: RunResult.trimToLastAnswer(outcome.output),
+                pendingPrompt: outcome.sentPending ? nil : pending
             )
+            if outcome.sentPending, notify {
+                ToastPresenter.shared.show(Toast(
+                    message: "\(result.recipeName) — 確認に答えたので Prompt を送りました",
+                    isError: false
+                ))
+            }
         }
     }
 
@@ -391,7 +423,8 @@ final class AppModel: ObservableObject {
             self.result = RunResult(
                 recipeName: result.recipeName,
                 agent: result.agent,
-                output: RunResult.trimToLastAnswer(output)
+                output: RunResult.trimToLastAnswer(output),
+                pendingPrompt: result.pendingPrompt
             )
         }
     }
@@ -582,6 +615,8 @@ struct RunResult: Identifiable {
     var recipeName: String
     var agent: HerdrAgent
     var output: String
+    /// まだ届いていない Prompt。起動時の確認に答えたあとで送る。
+    var pendingPrompt: String?
 
     /// Agent が確認待ちで止まっている場合の質問。
     var question: AgentQuestion? { AgentQuestionParser.parse(output) }

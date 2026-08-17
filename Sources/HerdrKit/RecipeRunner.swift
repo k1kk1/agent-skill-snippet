@@ -13,6 +13,11 @@ public struct RunReceipt: Hashable, Sendable {
     public var project: Project?
     /// 送信のために Agent を新規起動したか。
     public var startedNewAgent: Bool = false
+    /// 送った Prompt。届かなかった場合に送り直せるよう持っておく。
+    public var prompt: String = ""
+    /// Prompt が Agent の画面に入ったことを確認できたか。
+    /// 起動時の確認 (フォルダの信頼、モデル選択など) で止まっていると false になる。
+    public var promptDelivered: Bool = true
 
     /// 通知文。例: "Review Diff — Sent to ComposerSketch / Codex"
     public var notificationText: String {
@@ -23,6 +28,9 @@ public struct RunReceipt: Hashable, Sendable {
         case .paste:
             return "\(recipeName) — Pasted to \(agent?.displayName ?? "-")\(suffix)"
         case .submit:
+            guard promptDelivered else {
+                return "\(recipeName) — \(agent?.displayName ?? "-") が起動時の確認で止まっています"
+            }
             return "\(recipeName) — Sent to \(agent?.displayName ?? "-")\(suffix)"
         }
     }
@@ -131,6 +139,7 @@ public struct RecipeRunner: Sendable {
         project: Project?,
         waitTimeoutMS: Int? = nil
     ) throws -> RunReceipt {
+        var delivered = true
         do {
             switch mode {
             case .copy:
@@ -140,16 +149,87 @@ public struct RecipeRunner: Sendable {
                 // 入力状態にして編集してもらうので、その pane を前面に出す。
                 try? client.focusAgent(target: agent.id)
             case .submit:
-                try client.promptAgent(prompt, target: agent.id, waitTimeoutMS: waitTimeoutMS)
+                delivered = try submit(prompt, to: agent, waitTimeoutMS: waitTimeoutMS)
             }
         } catch {
             record(recipe: recipe, mode: mode, project: project, agent: agent, result: .failure, message: error.localizedDescription)
             throw error
         }
 
-        let receipt = RunReceipt(recipeName: recipe.name, mode: mode, agent: agent, project: project)
-        record(recipe: recipe, mode: mode, project: project, agent: agent, result: .success, message: receipt.notificationText)
+        let receipt = RunReceipt(
+            recipeName: recipe.name, mode: mode, agent: agent, project: project,
+            prompt: prompt, promptDelivered: delivered
+        )
+        record(
+            recipe: recipe, mode: mode, project: project, agent: agent,
+            result: delivered ? .success : .failure,
+            message: receipt.notificationText
+        )
         return receipt
+    }
+
+    /// Prompt を送り、Agent の画面に入ったことを確認する。
+    ///
+    /// 起動直後の Agent は、フォルダの信頼確認・モデル選択・MCP のロードなどで
+    /// 入力を受け付けないことがある。受理されたように見えて入力だけ落ちるため、
+    /// 送ったあとに画面を読んで確かめ、必要なら 1 度だけ送り直す。
+    private func submit(_ prompt: String, to agent: HerdrAgent, waitTimeoutMS: Int?) throws -> Bool {
+        // 確認ダイアログが出ている間に送ると、その選択肢に文字を打ち込むことになる。
+        // 起動直後は一瞬だけ blocked になることがあるので、少しだけ様子を見る。
+        if isBlocked(agent), isBlocked(waitWhileBlocked(agent)) { return false }
+
+        try client.promptAgent(prompt, target: agent.id, waitTimeoutMS: waitTimeoutMS)
+        if promptLanded(prompt, pane: agent.paneID) { return true }
+
+        // MCP のロードなどで取りこぼした場合はもう一度だけ試す。
+        guard let retryTarget = client.waitUntilInteractive(target: agent.id), !isBlocked(retryTarget) else {
+            return false
+        }
+        try client.promptAgent(prompt, target: agent.id, waitTimeoutMS: waitTimeoutMS)
+        return promptLanded(prompt, pane: agent.paneID)
+    }
+
+    private func isBlocked(_ agent: HerdrAgent) -> Bool {
+        (agent.status ?? "").lowercased() == "blocked"
+    }
+
+    /// 起動直後の一時的な blocked (バナー表示や起動処理の途中) が解けるか短く待つ。
+    /// 本物の確認ダイアログはユーザーが答えるまで解けないので、待ちは短くする。
+    private func waitWhileBlocked(_ agent: HerdrAgent, timeoutMS: Int = 8_000) -> HerdrAgent {
+        let deadline = Date().addingTimeInterval(Double(timeoutMS) / 1000)
+        var latest = agent
+        while Date() < deadline, isBlocked(latest) {
+            Thread.sleep(forTimeInterval: 0.5)
+            guard let next = try? client.agent(target: latest.id) else { return latest }
+            latest = next
+        }
+        return latest
+    }
+
+    /// 画面に Prompt の一部が出ているか。
+    /// TUI は折り返すので、空白を落としてから探す。
+    private func promptLanded(_ prompt: String, pane: String) -> Bool {
+        guard let needle = Self.deliveryMarker(for: prompt) else { return true }
+        // 画面を読めないときは「届いた」とみなす。
+        // 判定を誤って送り直すと、同じ Prompt が二重に実行されてしまう。
+        guard let output = try? client.readPane(pane, lines: 200),
+              !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        return Self.squeezed(output).contains(needle)
+    }
+
+    /// 届いたかを確かめるための短い目印。長すぎると折り返しや装飾で一致しなくなる。
+    static func deliveryMarker(for prompt: String) -> String? {
+        let firstLine = prompt
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        guard let firstLine, !firstLine.isEmpty else { return nil }
+        let marker = squeezed(String(firstLine.prefix(40)))
+        return marker.count >= 4 ? marker : nil
+    }
+
+    static func squeezed(_ text: String) -> String {
+        text.filter { !$0.isWhitespace }
     }
 
     /// 新しい tab を作って Agent を起動し、受け付けられる状態まで待つ。
@@ -183,7 +263,27 @@ public struct RecipeRunner: Sendable {
         let settled = client.waitForAgent(target: started.id) ?? started
         // status が idle でも TUI が描き終わっていないことがあり、
         // その間に送った Prompt は握りつぶされる。入力可能になるまで待つ。
-        return client.waitUntilInteractive(target: settled.id) ?? settled
+        let interactive = client.waitUntilInteractive(target: settled.id) ?? settled
+        // MCP のロードなどで起動処理が続いていると、まだ Prompt を取りこぼす。
+        // 落ち着く (idle / done) か、確認待ち (blocked) になるまで待つ。
+        return waitUntilSettled(interactive)
+    }
+
+    /// 起動処理 (MCP のロードなど) が終わるのを待つ。
+    /// blocked は待っても解けない (ユーザーが答えるまで進まない) のでそこで止める。
+    private func waitUntilSettled(_ agent: HerdrAgent, timeoutMS: Int = 60_000) -> HerdrAgent {
+        let deadline = Date().addingTimeInterval(Double(timeoutMS) / 1000)
+        var latest = agent
+        while Date() < deadline {
+            switch (latest.status ?? "").lowercased() {
+            case "idle", "done", "blocked": return latest
+            default: break
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+            guard let next = try? client.agent(target: latest.id) else { return latest }
+            latest = next
+        }
+        return latest
     }
 
     /// tab 作成直後はシェルの初期化が終わるまで `agent_pane_busy` になることがある。

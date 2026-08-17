@@ -27,6 +27,15 @@ struct ResultView: View {
                     }
                 }
 
+                if result.pendingPrompt != nil {
+                    Label(
+                        "起動時の確認で止まっているため、Prompt はまだ送っていません。答えると送信します。",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+
                 if let question = result.question {
                     QuestionPromptView(
                         question: question,
