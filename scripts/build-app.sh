@@ -26,6 +26,23 @@ cp Resources/Info.plist "${APP_DIR}/Contents/Info.plist"
 cp Resources/AppIcon.icns "${APP_DIR}/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 
+# どのソースから作った .app かを埋め込む。
+# ZIP から展開した (= .git が無い) 場合は日付を使う。
+MARKETING_VERSION="$(/usr/libexec/PlistBuddy -c 'print :CFBundleShortVersionString' Resources/Info.plist)"
+if COMMIT="$(git rev-parse --short HEAD 2>/dev/null)"; then
+    BUILD_ID="${COMMIT}"
+    git diff --quiet 2>/dev/null || BUILD_ID="${COMMIT}-dirty"
+else
+    BUILD_ID="src-$(date +%Y%m%d)"
+fi
+BUILD_DATE="$(date +%Y-%m-%d)"
+/usr/libexec/PlistBuddy \
+    -c "set :CFBundleShortVersionString ${MARKETING_VERSION} (${BUILD_ID})" \
+    -c "set :CFBundleVersion $(date +%Y%m%d%H%M)" \
+    -c "add :ARBuildCommit string ${BUILD_ID}" \
+    -c "add :ARBuildDate string ${BUILD_DATE}" \
+    "${APP_DIR}/Contents/Info.plist" >/dev/null
+
 echo "==> codesign (ad-hoc)"
 codesign --force --sign - "${APP_DIR}"
 

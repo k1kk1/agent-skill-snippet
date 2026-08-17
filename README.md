@@ -50,6 +50,25 @@ open build/AgentRecipes.app
 cp .build/release/agentrecipes /usr/local/bin/   # CLI を使う場合
 ```
 
+### 更新する
+
+`scripts/update.sh` が「最新ソースの取得 → テスト → ビルド → `/Applications` の差し替え → 再起動」を一度に行う。
+**git は不要**（ZIP を展開してビルドするだけ）なので、ZIP を手で落としている環境でもそのまま使える。
+
+```bash
+./scripts/update.sh                  # GitHub の main から更新
+./scripts/update.sh --ref v0.3.0     # タグ / ブランチを指定
+./scripts/update.sh --zip ~/dl.zip   # 手元の ZIP から更新（ネットワーク制限がある環境）
+./scripts/update.sh --local          # 今のソースのまま作り直すだけ
+./scripts/update.sh --install-cli /usr/local/bin   # CLI も入れ替える
+```
+
+インストール先は `AGENTRECIPES_INSTALL_DIR`、取得元は `AGENTRECIPES_REPO` で変えられる。
+ダウンロードした ZIP 由来の隔離属性は差し替え時に外すので、Gatekeeper に止められない。
+
+ビルドした `.app` にはソースの識別子が入る（例 `0.2.0 (35b7cfb)`、ZIP からのビルドは `0.2.0 (src-20260817)`）。
+`/usr/libexec/PlistBuddy -c 'print :CFBundleShortVersionString' /Applications/AgentRecipes.app/Contents/Info.plist` で確認できる。
+
 初回起動でサンプル Recipe 4 件（引数なし / 引数あり / Clipboard 利用 / リッチ表示テスト）が作られる。
 **Herdr が必要**（`herdr` が PATH にあり、サーバーが起動していること）。Copy モードだけは Herdr なしでも動く。
 
