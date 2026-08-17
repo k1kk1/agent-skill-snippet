@@ -50,6 +50,17 @@ open build/AgentRecipes.app
 cp .build/release/agentrecipes /usr/local/bin/   # CLI を使う場合
 ```
 
+### アイコンを作り直す
+
+アイコンは画像素材ではなく `scripts/make-icon.swift` が図形で描く。色や形を変えたらこれを実行するだけ。
+
+```bash
+swift scripts/make-icon.swift plane --icns Resources/AppIcon.icns   # 差し替え
+swift scripts/make-icon.swift card icon.png 512                     # 候補を PNG で確認
+```
+
+`plane`（紙飛行機・既定）/ `card`（レシピカード）/ `spark`（4 芒星）の 3 種類を用意してある。
+
 ### 更新する
 
 `scripts/update.sh` が「最新ソースの取得 → テスト → ビルド → `/Applications` の差し替え → 再起動」を一度に行う。
