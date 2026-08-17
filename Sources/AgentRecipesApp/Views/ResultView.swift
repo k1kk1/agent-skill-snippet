@@ -7,6 +7,8 @@ import HerdrKit
 struct ResultView: View {
     @ObservedObject var model: AppModel
 
+    @State private var reply: String = ""
+
     var body: some View {
         if let result = model.result {
             VStack(alignment: .leading, spacing: 10) {
@@ -16,12 +18,26 @@ struct ResultView: View {
                         Text(result.agent.displayName).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if model.isAnswering { ProgressView().controlSize(.small) }
                     if let status = result.agent.status {
                         Text(status)
                             .font(.caption2)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.15), in: Capsule())
                     }
+                }
+
+                if let question = result.question {
+                    QuestionPromptView(
+                        question: question,
+                        reply: $reply,
+                        disabled: model.isAnswering,
+                        onSelect: { model.answer($0, for: result) },
+                        onReply: {
+                            model.answer(text: reply, for: result)
+                            reply = ""
+                        }
+                    )
                 }
 
                 ScrollView([.horizontal, .vertical]) {
@@ -39,9 +55,14 @@ struct ResultView: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(result.output, forType: .string)
                     }
+                    Button("最新を読む", systemImage: "arrow.clockwise") { model.refreshResult() }
+                        .disabled(model.isAnswering)
                     Spacer()
-                    Text(result.isRich ? "Skill の構造化結果を表示しています" : "Agent の画面出力をそのまま読み取っています")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    Label(
+                        result.isRich ? "Skill の構造化結果" : "Agent の画面出力",
+                        systemImage: result.isRich ? "rectangle.3.group" : "terminal"
+                    )
+                    .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding(16)
@@ -49,6 +70,115 @@ struct ResultView: View {
             Text("結果がありません")
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// Agent が確認待ちのときに出す y/n（または番号選択）の回答 UI。
+private struct QuestionPromptView: View {
+    let question: AgentQuestion
+    @Binding var reply: String
+    var disabled: Bool
+    let onSelect: (AgentQuestion.Option) -> Void
+    let onReply: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Agent が確認を求めています", systemImage: "questionmark.bubble")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text(question.prompt)
+                .font(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // 選択肢は数が読めないので、折り返すレイアウトにする。
+            FlowLayout(spacing: 8) {
+                ForEach(question.options) { option in
+                    Button {
+                        onSelect(option)
+                    } label: {
+                        Text(option.label).lineLimit(1)
+                    }
+                    .buttonStyle(option.isAffirmative ? AnyButtonStyle(.borderedProminent) : AnyButtonStyle(.bordered))
+                    .disabled(disabled)
+                }
+            }
+
+            HStack(spacing: 6) {
+                TextField("自由に返信して送る（Enter）", text: $reply)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(onReply)
+                    .disabled(disabled)
+                Button("送信", action: onReply)
+                    .disabled(disabled || reply.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.orange.opacity(0.4))
+        )
+    }
+}
+
+/// ボタンスタイルを条件で切り替えるための型消去。
+private struct AnyButtonStyle: PrimitiveButtonStyle {
+    private let make: (Configuration) -> AnyView
+
+    init<S: PrimitiveButtonStyle>(_ style: S) {
+        make = { configuration in
+            AnyView(Button(role: configuration.role, action: configuration.trigger) {
+                configuration.label
+            }.buttonStyle(style))
+        }
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        make(configuration)
+    }
+}
+
+/// 選択肢を折り返して並べる簡易レイアウト。
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: CGFloat = 1
+        var x: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var height: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                height += rowHeight + spacing
+                rows += 1
+                x = 0
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: height + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
@@ -88,11 +218,13 @@ private struct RichResultBlockView: View {
     var body: some View {
         switch block {
         case .markdown(let content):
-            if let markdown = try? AttributedString(markdown: content) {
-                Text(markdown).font(.body)
-            } else {
-                Text(content).font(.body)
+            // 見出し・箇条書きを行ごとに描く。1 つの AttributedString にすると改行が畳まれてしまう。
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(content.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                    MarkdownLineView(line: line)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
         case .table(let columns, let rows):
             RichTableView(columns: columns, rows: rows)
@@ -110,13 +242,26 @@ private struct RichResultBlockView: View {
             }
 
         case .json(let value):
+            let text = value.prettyPrinted
             ScrollView(.horizontal) {
-                Text(value.prettyPrinted)
+                Text(text)
                     .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
             }
             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc").font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .help("この JSON をコピー")
+            }
         }
     }
 
@@ -145,6 +290,53 @@ private struct RichResultBlockView: View {
             return String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
         }
         return item
+    }
+}
+
+/// Markdown を 1 行ずつ描く。見出しと箇条書きだけ特別扱いし、装飾はインラインで解釈する。
+private struct MarkdownLineView: View {
+    let line: String
+
+    var body: some View {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            Spacer().frame(height: 6)
+        } else if let heading = heading(trimmed) {
+            Text(inline(heading.text))
+                .font(heading.level == 1 ? .title3.bold() : (heading.level == 2 ? .headline : .subheadline.bold()))
+                .padding(.top, 2)
+        } else if let bullet = bullet(trimmed) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("•").foregroundStyle(.secondary)
+                Text(inline(bullet)).fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Text(inline(line))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func heading(_ text: String) -> (level: Int, text: String)? {
+        guard text.hasPrefix("#") else { return nil }
+        let hashes = text.prefix { $0 == "#" }
+        let rest = text.dropFirst(hashes.count).trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty, hashes.count <= 6 else { return nil }
+        return (hashes.count, rest)
+    }
+
+    private func bullet(_ text: String) -> String? {
+        for marker in ["- ", "* ", "+ "] where text.hasPrefix(marker) {
+            return String(text.dropFirst(marker.count))
+        }
+        return nil
+    }
+
+    /// **強調** や `code` はインラインとして解釈する。
+    private func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
     }
 }
 

@@ -210,6 +210,15 @@ Recipe Editor の **Skill & Result** では、検出済みのSkillをRecipeへ�
 結果の形式を **リッチ結果 (JSON)** にすると、Skill／Agentへ `agent-recipes.result/v1` の出力契約を自動付与する。
 ResultウィンドウはMarkdown・表・リスト・JSONを構造化表示する。通常テキストを選んでも、Skill自身が同契約で返した場合は自動検出してリッチ表示する。
 
+## 実行前のプレビュー
+
+Recipe をクリックすると、**送る Prompt と送信先を確認する画面**を出してから実行する
+（Settings → General「実行前にプレビューを表示する」、既定 ON）。
+
+- 送信先（新しいセッションを起動するのか / どの Agent を再利用するのか）、作業フォルダ、Skill、結果の扱いを表示
+- 展開済みの Prompt をそのまま確認できる（クリップボードを使う Recipe はバッジで警告）
+- ボタンは「実行」「チャットに入力」「キャンセル」。画面内の「次回から確認しない」でそのまま OFF にできる
+
 ## 実行結果の確認
 
 Submit したあと **応答完了まで待って結果を表示する**（Settings → General、既定 ON）。
@@ -219,6 +228,15 @@ Submit したあと **応答完了まで待って結果を表示する**（Setti
 - Skill が `agent-recipes.result/v1` 契約で返した場合は、Markdown・表・リスト・JSON をリッチ表示する。不正または未対応の出力はプレーンテキストへフォールバックする
 - 通知（右上の HUD）: 送信時 `Web ページ調査 — Sent to my-home / Codex`、完了時 `… の応答が完了しました`
 - 待たない運用にするなら Settings でトグルを OFF。その場合は送信通知だけ出る
+
+### Agent からの確認に答える
+
+Agent が許可プロンプトや `(y/N)` で止まっている場合、Result ウィンドウの上部に**確認カード**が出る。
+
+- 選択肢がボタンになり、押すと `herdr pane send-keys` で対応するキーを送る（番号選択はその数字、y/n は `y`/`n` + Enter）
+- 「No, and tell Claude what to do differently」のように説明が要る場合は、自由入力欄から返信できる
+- 回答後は応答が落ち着くまで待って読み直す。手動で読み直す場合は「最新を読む」
+- 確認待ちのときは通知も「応答が完了しました」ではなく「確認を求めています」になる
 
 内部では `herdr agent prompt --wait --timeout` で待ち、`herdr pane read` で出力を読み取る。
 CLI も同じで `--wait [--timeout <ms>]`。
@@ -280,7 +298,7 @@ Recipe 側だけに保存され、元の Skill は変更しません。
 
 ## Settings
 
-使用する LLM（既定 Claude Code）/ Launch at Login / 通知 / 応答待ちと結果表示 / 作業ディレクトリ（既定）/
+使用する LLM（既定 Claude Code）/ Launch at Login / 通知 / 実行前プレビュー / 応答待ちと結果表示 / 作業ディレクトリ（既定）/
 herdr のパス / Herdr 接続状態 / MCP 接続状況 / Skill Sources とエディタ / Recipe ディレクトリ / Debug logging / 履歴件数。
 
 Manage Recipes 画面の右上の歯車からも開けます。

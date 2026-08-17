@@ -55,6 +55,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var editorCommand: String
     /// Recipe に作業フォルダが無いときに、新しい Agent を起動する cwd。空なら `~/.agentrecipes`。
     public var defaultWorkingDirectory: String
+    /// 送信前に、実際に送る Prompt と送信先をプレビューする。
+    public var previewBeforeRun: Bool
 
     /// 未設定のときに使う作業ディレクトリ。
     /// ホーム直下や Application Support（Recipe / 設定の保存先）を Agent の cwd にすると、
@@ -94,7 +96,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         resultTimeoutSeconds: Int = 600,
         skillSources: [SkillSource] = SkillSource.defaults,
         editorCommand: String = "code",
-        defaultWorkingDirectory: String = ""
+        defaultWorkingDirectory: String = "",
+        previewBeforeRun: Bool = true
     ) {
         self.schemaVersion = schemaVersion
         self.launchAtLogin = launchAtLogin
@@ -110,12 +113,13 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.skillSources = skillSources
         self.editorCommand = editorCommand
         self.defaultWorkingDirectory = defaultWorkingDirectory
+        self.previewBeforeRun = previewBeforeRun
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, launchAtLogin, notificationsEnabled, herdrExecutablePath
         case recipesDirectory, debugLogging, historyLimit, defaultMode, skillSources, editorCommand
-        case waitForResult, resultTimeoutSeconds, agent, defaultWorkingDirectory
+        case waitForResult, resultTimeoutSeconds, agent, defaultWorkingDirectory, previewBeforeRun
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +139,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         skillSources = try c.decodeIfPresent([SkillSource].self, forKey: .skillSources) ?? d.skillSources
         editorCommand = try c.decodeIfPresent(String.self, forKey: .editorCommand) ?? d.editorCommand
         defaultWorkingDirectory = try c.decodeIfPresent(String.self, forKey: .defaultWorkingDirectory) ?? d.defaultWorkingDirectory
+        previewBeforeRun = try c.decodeIfPresent(Bool.self, forKey: .previewBeforeRun) ?? d.previewBeforeRun
     }
 }
 

@@ -7,6 +7,7 @@ final class PanelPresenter {
     static let shared = PanelPresenter()
 
     private var runWindow: NSWindow?
+    private var previewWindow: NSWindow?
     private var managerWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var resultWindow: NSWindow?
@@ -25,6 +26,21 @@ final class PanelPresenter {
 
     func closeRunForm() {
         runWindow?.close()
+    }
+
+    /// 実行前プレビュー。送る Prompt と送信先を見せてから実行する。
+    func showPreview(model: AppModel) {
+        let window = previewWindow ?? makeWindow(
+            title: "実行前の確認",
+            size: NSSize(width: 560, height: 520),
+            content: RunPreviewView(model: model)
+        )
+        previewWindow = window
+        present(window)
+    }
+
+    func closePreview() {
+        previewWindow?.close()
     }
 
     func showManager(model: AppModel) {

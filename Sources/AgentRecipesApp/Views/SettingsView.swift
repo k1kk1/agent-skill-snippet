@@ -50,6 +50,7 @@ private struct GeneralSettings: View {
 
             Toggle("ログイン時に起動する", isOn: $model.settings.launchAtLogin)
             Toggle("送信結果を通知する", isOn: $model.settings.notificationsEnabled)
+            Toggle("実行前にプレビューを表示する", isOn: $model.settings.previewBeforeRun)
             Toggle("Submit のあと応答完了まで待って結果を表示する", isOn: $model.settings.waitForResult)
             if model.settings.waitForResult {
                 Stepper("応答待ちの上限: \(model.settings.resultTimeoutSeconds) 秒",

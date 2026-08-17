@@ -28,8 +28,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var mcpChecking: Set<AgentKind> = []
 
     @Published var runRequest: RunRequest?
+    /// 実行前プレビューの対象。
+    @Published var previewRequest: RunPreview?
     /// Submit の応答結果。Result ウィンドウが参照する。
     @Published var result: RunResult?
+    /// 確認への回答を送っている最中。
+    @Published var isAnswering = false
     /// 応答待ちの実行。Recipe 名ではなく実行ごとの UUID で対応付ける。
     @Published private(set) var pendingResults: [PendingResult] = []
 
@@ -220,7 +224,32 @@ final class AppModel: ObservableObject {
                 isError: false
             ))
         }
+
+        // 送る前に何が送られるかを見せる (Settings で切り替え、Copy は対象外)。
+        if settings.previewBeforeRun, mode.requiresHerdr {
+            previewRequest = RunPreview(recipe: recipe, project: project(for: recipe), mode: mode)
+            PanelPresenter.shared.showPreview(model: self)
+            return
+        }
         execute(recipe: recipe, values: [:], project: project(for: recipe), mode: mode, agent: nil)
+    }
+
+    /// プレビューから実行する。
+    func runPreview(_ preview: RunPreview, mode: ExecutionMode? = nil) {
+        previewRequest = nil
+        PanelPresenter.shared.closePreview()
+        execute(
+            recipe: preview.recipe,
+            values: [:],
+            project: preview.project,
+            mode: mode ?? preview.mode,
+            agent: nil
+        )
+    }
+
+    func cancelPreview() {
+        previewRequest = nil
+        PanelPresenter.shared.closePreview()
     }
 
     /// 送信の実体。agent が指定されていればそこへ、無ければ Target Resolver に任せる。
@@ -287,18 +316,83 @@ final class AppModel: ObservableObject {
         let client = makeClient()
         Task {
             let output = await HerdrBackground.run { (try? client.readPane(agent.paneID, lines: 200)) ?? "" }
-            self.result = RunResult(
+            let result = RunResult(
                 recipeName: receipt.recipeName,
                 agent: agent,
                 output: RunResult.trimToLastAnswer(output)
             )
+            self.result = result
             PanelPresenter.shared.showResult(model: self)
             if notify {
-                ToastPresenter.shared.show(Toast(
-                    message: "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました",
-                    isError: false
-                ))
+                // 確認待ちで止まっている場合は、完了と伝えない。
+                let message = result.question == nil
+                    ? "\(receipt.recipeName) — \(agent.displayName) の応答が完了しました"
+                    : "\(receipt.recipeName) — \(agent.displayName) が確認を求めています"
+                ToastPresenter.shared.show(Toast(message: message, isError: result.question != nil))
             }
+        }
+    }
+
+    /// Agent の確認に答える。キーを送ってから、少し待って結果を読み直す。
+    func answer(_ option: AgentQuestion.Option, for result: RunResult) {
+        sendToAgent(result: result) { client in
+            try client.sendKeys(option.keys, toPane: result.agent.paneID)
+        }
+    }
+
+    /// 確認に自由入力で答える。
+    func answer(text: String, for result: RunResult) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendToAgent(result: result) { client in
+            try client.sendText(trimmed, toPane: result.agent.paneID)
+            try client.sendKeys(["enter"], toPane: result.agent.paneID)
+        }
+    }
+
+    private func sendToAgent(result: RunResult, _ action: @escaping @Sendable (HerdrClient) throws -> Void) {
+        let client = makeClient()
+        let timeoutMS = settings.resultTimeoutSeconds * 1000
+        isAnswering = true
+        Task {
+            let output = await HerdrBackground.run { () -> String? in
+                do {
+                    try action(client)
+                } catch {
+                    return nil
+                }
+                // 答えたあとの続きを待ってから読む。待てなくても読み直しはする。
+                _ = client.waitForAgent(target: result.agent.id, timeoutMS: timeoutMS)
+                return (try? client.readPane(result.agent.paneID, lines: 200)) ?? ""
+            }
+            self.isAnswering = false
+            guard let output else {
+                ToastPresenter.shared.show(Toast(message: "Agent へ送信できませんでした", isError: true))
+                return
+            }
+            self.result = RunResult(
+                recipeName: result.recipeName,
+                agent: result.agent,
+                output: RunResult.trimToLastAnswer(output)
+            )
+        }
+    }
+
+    /// 結果を読み直す。
+    func refreshResult() {
+        guard let result else { return }
+        let client = makeClient()
+        isAnswering = true
+        Task {
+            let output = await HerdrBackground.run {
+                (try? client.readPane(result.agent.paneID, lines: 200)) ?? ""
+            }
+            self.isAnswering = false
+            self.result = RunResult(
+                recipeName: result.recipeName,
+                agent: result.agent,
+                output: RunResult.trimToLastAnswer(output)
+            )
         }
     }
 
@@ -475,11 +569,22 @@ private enum HerdrBackground {
 }
 
 /// Submit の応答結果。
+/// 実行前プレビューの対象。
+struct RunPreview: Identifiable {
+    let id = UUID()
+    var recipe: Recipe
+    var project: Project?
+    var mode: ExecutionMode
+}
+
 struct RunResult: Identifiable {
     let id = UUID()
     var recipeName: String
     var agent: HerdrAgent
     var output: String
+
+    /// Agent が確認待ちで止まっている場合の質問。
+    var question: AgentQuestion? { AgentQuestionParser.parse(output) }
 
     var isRich: Bool {
         if case .rich = RichResultParser.parse(output) { return true }

@@ -70,7 +70,17 @@ public final class HerdrClient: @unchecked Sendable {
     /// pane の出力を読む。Submit の結果を受け取るために使う。
     /// このコマンドだけは成功時に生テキストを返し、失敗時だけ JSON エンベロープになる。
     public func readPane(_ pane: String, lines: Int = 200) throws -> String {
-        let output = try run(["pane", "read", pane, "--lines", String(lines)])
+        let output = try readPane(pane, lines: lines, source: nil)
+        // 既定の source (recent) は pane によって空を返すことがあるので、
+        // その場合だけ表示中の画面を読み直す。
+        guard output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return output }
+        return (try? readPane(pane, lines: lines, source: "visible")) ?? output
+    }
+
+    private func readPane(_ pane: String, lines: Int, source: String?) throws -> String {
+        var args = ["pane", "read", pane, "--lines", String(lines)]
+        if let source { args += ["--source", source] }
+        let output = try run(args)
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8),
            let envelope = try? JSONCoding.decoder.decode(HerdrEnvelope<AnyIgnored>.self, from: data),
@@ -98,6 +108,13 @@ public final class HerdrClient: @unchecked Sendable {
     /// Paste: pane へ文字列だけ送る (Enter は押さない)。
     public func sendText(_ text: String, toPane pane: String) throws {
         try runVoid(["pane", "send-text", pane, text])
+    }
+
+    /// キー入力を送る。Agent の確認 (許可プロンプトや y/n) に答えるために使う。
+    /// キー名は herdr の表記に従う (`enter` / `esc` など)。
+    public func sendKeys(_ keys: [String], toPane pane: String) throws {
+        guard !keys.isEmpty else { return }
+        try runVoid(["pane", "send-keys", pane] + keys)
     }
 
     /// Submit: Agent へ prompt として送る。target は pane_id。
