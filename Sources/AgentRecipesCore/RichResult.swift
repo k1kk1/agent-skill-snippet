@@ -177,6 +177,17 @@ public enum RichResultParser {
     }
 
     private static func decode(_ json: String) -> RichResultDocument? {
+        if let document = decodeExactly(json) { return document }
+        // TUI は幅で折り返すため、文字列の途中に改行が入って JSON が壊れることがある。
+        // 改行と行頭の空白を畳んでからもう一度試す。
+        let unwrapped = json.replacingOccurrences(
+            of: "\n[ \t]*", with: "", options: .regularExpression
+        )
+        guard unwrapped != json else { return nil }
+        return decodeExactly(unwrapped)
+    }
+
+    private static func decodeExactly(_ json: String) -> RichResultDocument? {
         guard let data = json.data(using: .utf8),
               let document = try? JSONCoding.decoder.decode(RichResultDocument.self, from: data),
               document.schema == RichResultDocument.schema,

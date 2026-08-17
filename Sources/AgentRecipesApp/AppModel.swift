@@ -324,7 +324,7 @@ final class AppModel: ObservableObject {
             let result = RunResult(
                 recipeName: receipt.recipeName,
                 agent: agent,
-                output: RunResult.trimToLastAnswer(output),
+                rawOutput: output,
                 pendingPrompt: receipt.promptDelivered ? nil : receipt.prompt
             )
             self.result = result
@@ -398,7 +398,7 @@ final class AppModel: ObservableObject {
             self.result = RunResult(
                 recipeName: result.recipeName,
                 agent: result.agent,
-                output: RunResult.trimToLastAnswer(outcome.output),
+                rawOutput: outcome.output,
                 pendingPrompt: outcome.sentPending ? nil : pending
             )
             if outcome.sentPending, notify {
@@ -423,7 +423,7 @@ final class AppModel: ObservableObject {
             self.result = RunResult(
                 recipeName: result.recipeName,
                 agent: result.agent,
-                output: RunResult.trimToLastAnswer(output),
+                rawOutput: output,
                 pendingPrompt: result.pendingPrompt
             )
         }
@@ -614,16 +614,25 @@ struct RunResult: Identifiable {
     let id = UUID()
     var recipeName: String
     var agent: HerdrAgent
-    var output: String
+    /// pane から読んだ全文。リッチ結果の JSON はここから読む。
+    var rawOutput: String
     /// まだ届いていない Prompt。起動時の確認に答えたあとで送る。
     var pendingPrompt: String?
 
     /// Agent が確認待ちで止まっている場合の質問。
-    var question: AgentQuestion? { AgentQuestionParser.parse(output) }
+    var question: AgentQuestion? { AgentQuestionParser.parse(rawOutput) }
+
+    /// リッチ結果は切り詰めると JSON が壊れるので、全文から解析する。
+    var presentation: ResultPresentation { RichResultParser.parse(rawOutput) }
 
     var isRich: Bool {
-        if case .rich = RichResultParser.parse(output) { return true }
+        if case .rich = presentation { return true }
         return false
+    }
+
+    /// 表示・コピー用のテキスト。プレーン表示のときだけ末尾のやり取りに絞る。
+    var output: String {
+        isRich ? rawOutput : RunResult.trimToLastAnswer(rawOutput)
     }
 
     /// pane 全体ではなく、最後のやり取りだけを見せる。

@@ -50,7 +50,7 @@ struct ResultView: View {
                 }
 
                 ScrollView([.horizontal, .vertical]) {
-                    ResultContentView(presentation: RichResultParser.parse(result.output))
+                    ResultContentView(presentation: result.presentation)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)

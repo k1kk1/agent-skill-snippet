@@ -102,6 +102,35 @@ final class RichResultTests: XCTestCase {
         XCTAssertEqual(RichResultParser.parse(output), .plain(output))
     }
 
+    /// TUI が幅で折り返して、文字列の途中に改行が入っても読める。
+    func testWrappedJSONInPaneOutputIsParsed() throws {
+        let output = """
+        ⏺ agent-recipes-result
+          {
+            "schema": "agent-recipes.result/v1",
+            "title": "Agent Recipes 動作確認",
+            "blocks": [
+              { "type": "markdown", "content": "**結果: 7/7 ok**" },
+              {
+                "type": "table",
+                "columns": ["項目", "結果", "詳細"],
+                "rows": [
+                  ["mcp", "ok", "MCP ツールは名前のみ提示: chrome-devtools, playwright。接続状態はツールを呼ばずに確認できないため
+          報告しない"]
+                ]
+              }
+            ]
+          }
+
+        ✻ Baked for 12s
+        """
+        guard case .rich(let document) = RichResultParser.parse(output) else {
+            return XCTFail("折り返された JSON を解析できませんでした")
+        }
+        XCTAssertEqual(document.title, "Agent Recipes 動作確認")
+        XCTAssertEqual(document.blocks.count, 2)
+    }
+
     func testDocumentRoundTrip() throws {
         let source = RichResultDocument(title: "Round trip", blocks: [
             .markdown("Hello **world**"),
