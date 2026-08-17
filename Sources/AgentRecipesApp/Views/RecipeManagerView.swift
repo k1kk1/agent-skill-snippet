@@ -85,6 +85,9 @@ struct RecipeManagerView: View {
                     }
                 }
             }
+            // サイドバーの既定はすりガラス。背後のウィンドウが透けるので塗りつぶす。
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
             HStack {
@@ -101,6 +104,7 @@ struct RecipeManagerView: View {
             .padding(8)
         }
         .frame(minWidth: 320)
+        .background(Color(nsColor: .windowBackgroundColor))
         .navigationSplitViewColumnWidth(min: 320, ideal: 340, max: 400)
     }
 

@@ -59,7 +59,10 @@ final class PanelPresenter {
         if let existing = settingsWindow {
             // @State の初期値は既存 View には再適用されないため、起動引数で
             // 指定されたタブを確実に反映できるよう rootView を差し替える。
-            let controller = NSHostingController(rootView: SettingsView(model: model, selection: tab))
+            let controller = NSHostingController(
+                rootView: SettingsView(model: model, selection: tab)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            )
             controller.sizingOptions = []
             existing.contentViewController = controller
             window = existing
@@ -106,7 +109,12 @@ final class PanelPresenter {
         window.titlebarAppearsTransparent = false
         window.styleMask.remove(.fullSizeContentView)
         window.isReleasedWhenClosed = false
-        let controller = NSHostingController(rootView: content)
+        // 背後のウィンドウが透けると内容が読めなくなるため、必ず不透明にする。
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
+        let controller = NSHostingController(
+            rootView: content.background(Color(nsColor: .windowBackgroundColor))
+        )
         // rootView の内容が切り替わるたびに preferredContentSize を更新すると、
         // NavigationSplitView の詳細表示で NSWindow のサイズ／位置まで動いてしまう。
         // 初期サイズは呼び出し元で決め、以降は利用者のリサイズだけを反映する。
