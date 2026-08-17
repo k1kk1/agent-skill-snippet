@@ -405,9 +405,25 @@ cp -R skills/* ~/.claude/skills/
 cp -R skills/* ~/.codex/skills/
 ```
 
-対応する Recipe「動作確認」(`agent-recipes-check`) は、マーカー・送信日時・Project・cwd を
-埋めた Prompt を送り、Agent 側は受け取った内容と実際の `pwd` の一致を報告するだけ。
-既定は 実行 (Submit) ＋ 新しいセッションなので、メニューから 1 クリックで確認できる。
+### 動作確認レシピ
+
+`動作確認` (`agent-recipes-check`) は、アプリの機能を 1 クリックで一通り点検する。
+Agent は次の 7 項目を判定し、**リッチ結果**で返す。
+
+| 項目 | 見るもの |
+| --- | --- |
+| delivery | マーカーと送信日時が Prompt どおり届いたか |
+| variables | `{{date}} {{time}} {{project}} {{cwd}} {{clipboard}}` が展開されたか |
+| cwd | `pwd` が Prompt の CWD と一致するか（送信先の解決が正しいか） |
+| session | この Prompt が最初のやり取りか（新しいセッションで動いたか） |
+| skill | Skill が読み込めたか |
+| mcp | Agent から見えている MCP ツール（名前だけ。分からなければ unknown） |
+| rich | `agent-recipes.result/v1` で返せているか |
+
+`確認カードの動作確認` (`agent-recipes-check-confirm`) は、Agent が `(y/n)` で質問して止まる状態を作る。
+Result ウィンドウに確認カードが出るので、アプリから答えられるかを試せる。
+
+どちらも `pwd` 以外のコマンドを実行せず、ファイルも変更しない。
 
 ```bash
 agentrecipes submit agent-recipes-check                       # 自動で送信先を決めて実行

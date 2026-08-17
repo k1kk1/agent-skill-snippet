@@ -4,7 +4,62 @@ import Foundation
 /// 引数なし / 引数あり / Clipboard 利用 / リッチ結果 のパターン。
 public enum SampleRecipes {
     public static var all: [Recipe] {
-        [reviewDiff, webResearch, clipboardReview, richResultTest, skillCreator]
+        [reviewDiff, webResearch, clipboardReview, richResultTest, skillCreator, check, checkConfirmation]
+    }
+
+    /// アプリの機能を一通り点検する。Prompt 到達・変数展開・作業ディレクトリ・
+    /// 新規セッション・Skill 読み込み・MCP の見え方・リッチ結果をまとめて確認する。
+    public static var check: Recipe {
+        Recipe(
+            id: "agent-recipes-check",
+            name: "動作確認",
+            description: "Prompt 到達・変数・cwd・新規セッション・MCP・リッチ表示をまとめて点検する",
+            category: "Utilities",
+            tags: ["debug", "check"],
+            favorite: true,
+            skill: SkillReference(name: "agent-recipes-check", source: "claude"),
+            resultFormat: .rich,
+            arguments: [
+                ArgumentSpec(
+                    name: "marker",
+                    label: "マーカー",
+                    type: .string,
+                    required: true,
+                    defaultValue: "PING"
+                ),
+            ],
+            mode: .submit,
+            target: TargetSpec(session: .newSession),
+            body: """
+            agent-recipes-check スキルを使って、Agent Recipes の動作を点検してください。
+
+            CHECK: full
+            MARKER: {{marker}}
+            SENT_AT: {{date}} {{time}}
+            PROJECT: {{project}}
+            CWD: {{cwd}}
+            CLIPBOARD: {{clipboard}}
+            """
+        )
+    }
+
+    /// Result ウィンドウの確認カード (y/n) を試す。
+    public static var checkConfirmation: Recipe {
+        Recipe(
+            id: "agent-recipes-check-confirm",
+            name: "確認カードの動作確認",
+            description: "Agent が質問して止まったとき、アプリから y/n を返せるかを試す",
+            category: "Utilities",
+            tags: ["debug", "check"],
+            skill: SkillReference(name: "agent-recipes-check", source: "claude"),
+            mode: .submit,
+            target: TargetSpec(session: .newSession),
+            body: """
+            agent-recipes-check スキルを使ってください。
+
+            CHECK: confirm
+            """
+        )
     }
 
     /// 引数なし。選ぶと即送信される。
