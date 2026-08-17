@@ -69,10 +69,10 @@ struct RecipeManagerView: View {
                     }
                 }
                 if !unconfiguredSkills.isEmpty {
-                    Section("Agent Skills") {
-                        ForEach(unconfiguredSkills) { skill in
-                            ManagerSkillRow(skill: skill, recipe: nil)
-                                .tag(SidebarItem.skill(skill.id))
+                    Section("未設定の Skill") {
+                        ForEach(unconfiguredSkills) { entry in
+                            ManagerSkillRow(skill: entry.skill, sources: entry.sources)
+                                .tag(SidebarItem.skill(entry.skill.id))
                         }
                     }
                 }
@@ -148,8 +148,27 @@ struct RecipeManagerView: View {
     }
 
     /// まだ Recipe を持たない Skill。設定済みの Skill は Recipe としてカテゴリに並ぶ。
-    private var unconfiguredSkills: [DiscoveredSkill] {
-        visibleSkills.filter { recipe(for: $0) == nil }
+    /// claude / codex の両方にある同名の Skill は 1 行にまとめる。
+    private var unconfiguredSkills: [SkillEntry] {
+        var order: [String] = []
+        var grouped: [String: SkillEntry] = [:]
+        for skill in visibleSkills where recipe(for: skill) == nil {
+            if var entry = grouped[skill.name] {
+                if !entry.sources.contains(skill.source) { entry.sources.append(skill.source) }
+                grouped[skill.name] = entry
+            } else {
+                order.append(skill.name)
+                grouped[skill.name] = SkillEntry(skill: skill, sources: [skill.source])
+            }
+        }
+        return order.compactMap { grouped[$0] }
+    }
+
+    /// 同名 Skill をまとめた 1 行分。
+    struct SkillEntry: Identifiable {
+        var skill: DiscoveredSkill
+        var sources: [String]
+        var id: String { skill.id }
     }
 
     private var groupedCategories: [String] {
@@ -291,13 +310,12 @@ private struct ManagerRecipeRow: View {
     var body: some View {
         HStack(spacing: 8) {
             // Skill から作った Recipe は、カテゴリに並んでも由来が分かるようにする。
-            if let skill = recipe.skill {
-                Image(systemName: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(.tint)
-                    .help("Agent Skill: \(skill.displayName)")
-            }
-            VStack(alignment: .leading, spacing: 3) {
+            Image(systemName: recipe.skill == nil ? modeIcon : "sparkles")
+                .font(.caption)
+                .foregroundStyle(recipe.skill == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                .frame(width: 14)
+                .help(recipe.skill.map { "Agent Skill: \($0.displayName)" } ?? recipe.mode.explanation)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(recipe.name)
                     .lineLimit(1)
                 if let description = recipe.description, !description.isEmpty {
@@ -306,58 +324,46 @@ private struct ManagerRecipeRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                // サイドバーは名前を優先し、詳細はツールチップで読めるアイコン表示にする。
-                RecipeInputBadges(recipe: recipe, compact: true)
             }
             Spacer(minLength: 4)
             if recipe.favorite {
                 Image(systemName: "star.fill")
                     .foregroundStyle(.yellow)
-                    .font(.caption)
+                    .font(.caption2)
                     .accessibilityLabel("お気に入り")
             }
-            Image(systemName: modeIcon)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help(recipe.mode.explanation)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
     }
 }
 
-/// Agent Skill の一覧行。ローカル Recipe がある場合は、その設定状態も併記する。
+/// まだ Recipe を持たない Agent Skill の行。
 private struct ManagerSkillRow: View {
     let skill: DiscoveredSkill
-    let recipe: Recipe?
+    /// 同名 Skill が置かれている場所 (claude / codex)。
+    let sources: [String]
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.caption)
                 .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 3) {
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(skill.name)
                     .lineLimit(1)
-                if let recipe {
-                    RecipeInputBadges(recipe: recipe, compact: true)
-                } else if let description = skill.description, !description.isEmpty {
-                    Text(description)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text("選択して実行設定を追加")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(skill.description ?? "選択して実行設定を追加")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 4)
-            Text(skill.source)
+            Text(sources.joined(separator: " · "))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 3)
-        .help("Skill を選択して、Recipe 側の Prompt・入力・実行方法を設定します")
+        .padding(.vertical, 2)
+        .help("Skill を選ぶと、実行方法と Prompt を設定できます")
     }
 }
 
@@ -385,6 +391,7 @@ struct RecipeEditorView: View {
 
     @State private var tagText: String = ""
     @State private var autoSaveTask: Task<Void, Never>?
+    @State private var showsAdvancedBasics = false
 
     private enum WorkspaceChoice: Hashable {
         case none
@@ -467,10 +474,6 @@ struct RecipeEditorView: View {
             basicRow("Name") {
                 TextField("", text: $recipe.name).labelsHidden()
             }
-            basicRow("ID") {
-                TextField("", text: $recipe.id).labelsHidden()
-                    .font(.system(.body, design: .monospaced))
-            }
             basicRow("Description") {
                 TextField("", text: Binding(
                     get: { recipe.description ?? "" },
@@ -483,15 +486,27 @@ struct RecipeEditorView: View {
                     set: { recipe.category = $0.isEmpty ? nil : $0 }
                 )).labelsHidden()
             }
-            basicRow("Tags") {
-                TextField("comma separated", text: $tagText)
-                    .labelsHidden()
-                    .onChange(of: tagText) { _, _ in
-                        recipe.tags = tagText
-                            .split(separator: ",")
-                            .map { $0.trimmingCharacters(in: .whitespaces) }
-                            .filter { !$0.isEmpty }
+            // ID とタグは普段いじらないので畳んでおく。
+            DisclosureGroup(isExpanded: $showsAdvancedBasics) {
+                VStack(alignment: .leading, spacing: 8) {
+                    basicRow("ID") {
+                        TextField("", text: $recipe.id).labelsHidden()
+                            .font(.system(.body, design: .monospaced))
                     }
+                    basicRow("Tags") {
+                        TextField("comma separated", text: $tagText)
+                            .labelsHidden()
+                            .onChange(of: tagText) { _, _ in
+                                recipe.tags = tagText
+                                    .split(separator: ",")
+                                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                                    .filter { !$0.isEmpty }
+                            }
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
+                Text("ID とタグ").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -535,9 +550,6 @@ struct RecipeEditorView: View {
             .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
-            Text(recipe.mode.explanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if recipe.mode == .submit, !recipe.arguments.isEmpty {
                 Label("必要な入力が足りない場合は、チャットに入力してから送信します。", systemImage: "text.cursor")
                     .font(.caption)
@@ -549,9 +561,6 @@ struct RecipeEditorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("送信先", systemImage: "paperplane")
                         .font(.subheadline.weight(.semibold))
-                    Text("Prompt を送る Herdr 上の Agent を、どのように決めるかを設定します。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     targetRow("Agent の選び方") {
                         Picker("", selection: $recipe.target.session) {
                             ForEach(SessionPolicy.allCases, id: \.self) { policy in
@@ -603,9 +612,6 @@ struct RecipeEditorView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("ローカル作業フォルダ", systemImage: "folder")
                             .font(.subheadline.weight(.semibold))
-                        Text("Herdr workspace とは別の、Agent が作業するローカルのディレクトリ（cwd）です。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                         if let project = model.project(for: recipe) {
                             HStack(spacing: 8) {
                                 Label(project.name, systemImage: "folder.fill")
@@ -632,7 +638,7 @@ struct RecipeEditorView: View {
                                 .buttonStyle(.link)
                             }
                         }
-                        Text("再利用時は、同じ cwd の Agent だけを候補にします。")
+                        Text("Agent の cwd。未設定なら Settings の既定を使います。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
