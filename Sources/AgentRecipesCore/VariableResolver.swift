@@ -36,12 +36,16 @@ public struct VariableResolver: Sendable {
 
     public let clipboard: ClipboardAccess
     private let now: @Sendable () -> Date
+    /// Project が無いときに `{{cwd}}` へ入れる既定の作業ディレクトリ。
+    private let defaultWorkingDirectory: String?
 
     public init(
         clipboard: ClipboardAccess = SystemClipboard(),
+        defaultWorkingDirectory: String? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.clipboard = clipboard
+        self.defaultWorkingDirectory = defaultWorkingDirectory
         self.now = now
     }
 
@@ -61,7 +65,7 @@ public struct VariableResolver: Sendable {
             "date": date.string(from: stamp),
             "time": time.string(from: stamp),
             "project": project?.name ?? "",
-            "cwd": project?.expandedPath ?? "",
+            "cwd": project?.expandedPath ?? defaultWorkingDirectory ?? "",
         ]
         if includeClipboard { values["clipboard"] = clipboard.read() }
         return values

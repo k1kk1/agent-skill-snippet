@@ -56,11 +56,11 @@ struct RunPreviewView: View {
                 }
             }
             Spacer()
+            // ボタンと紛らわしくならないよう、モードは控えめなラベルで出す。
             Label(preview.mode.displayName, systemImage: preview.mode.editorIcon)
-                .font(.caption.weight(.medium))
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.12), in: Capsule())
+                .labelStyle(.titleAndIcon)
         }
     }
 

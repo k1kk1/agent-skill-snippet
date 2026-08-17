@@ -566,7 +566,11 @@ final class RecipeRunnerTests: XCTestCase {
         guard case .completed(let receipt) = outcome else { return XCTFail("completed のはず") }
 
         let commands = fake.invocations.map { $0.arguments.prefix(2).joined(separator: " ") }
-        XCTAssertEqual(commands, ["agent list", "workspace list", "workspace create", "agent start", "agent wait", "agent prompt"])
+        // agent get は「TUI が入力を受け付けられるか」の確認。
+        XCTAssertEqual(
+            commands,
+            ["agent list", "workspace list", "workspace create", "agent start", "agent wait", "agent get", "agent prompt"]
+        )
         XCTAssertEqual(
             fake.invocations[2].arguments,
             ["workspace", "create", "--no-focus", "--cwd", "/Users/x/src/music-db", "--label", "AgentRecipes"]

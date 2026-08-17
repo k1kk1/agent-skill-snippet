@@ -122,6 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         model?.reload()
         model?.refreshHerdr()
+        // popover の hosting controller は使い回されるため onAppear が再発火しないことがある。
+        // クリップボード由来の既定値が古いままになるので、開くたびに取り直す。
+        model?.refreshClipboardSnapshot()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()

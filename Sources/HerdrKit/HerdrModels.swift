@@ -159,10 +159,14 @@ public struct HerdrAgent: Codable, Hashable, Identifiable, Sendable {
     public var tabID: String?
     public var title: String?
     public var focused: Bool?
+    /// Agent の TUI が入力を受け付けられる状態か。
+    /// 起動直後はスプラッシュ表示などで false になり、この間に送った Prompt は落ちる。
+    public var interactiveReady: Bool?
 
     public init(
         id: String, agent: String? = nil, status: String? = nil, cwd: String? = nil,
-        workspaceID: String? = nil, tabID: String? = nil, title: String? = nil, focused: Bool? = nil
+        workspaceID: String? = nil, tabID: String? = nil, title: String? = nil, focused: Bool? = nil,
+        interactiveReady: Bool? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -172,6 +176,7 @@ public struct HerdrAgent: Codable, Hashable, Identifiable, Sendable {
         self.tabID = tabID
         self.title = title
         self.focused = focused
+        self.interactiveReady = interactiveReady
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -183,6 +188,7 @@ public struct HerdrAgent: Codable, Hashable, Identifiable, Sendable {
         case tabID = "tab_id"
         case title = "terminal_title_stripped"
         case focused
+        case interactiveReady = "interactive_ready"
     }
 
     /// pane_id と agent id は同一。Paste も Submit も同じ target を使う。

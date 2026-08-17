@@ -158,6 +158,24 @@ public final class HerdrClient: @unchecked Sendable {
         try decode(AgentStartedResult.self, command: ["agent", "start", name, "--kind", kind, "--pane", pane]).agent
     }
 
+    /// TUI が入力を受け付けられるようになるまで待つ。
+    ///
+    /// 起動直後の Claude Code / Codex はスプラッシュを描いている間 `interactive_ready` が false で、
+    /// この間に `agent prompt` を送っても受理されたように見えて実際には入力が落ちる。
+    @discardableResult
+    public func waitUntilInteractive(target: String, timeoutMS: Int = 30_000) -> HerdrAgent? {
+        let deadline = Date().addingTimeInterval(Double(timeoutMS) / 1000)
+        var latest: HerdrAgent?
+        repeat {
+            latest = try? agent(target: target)
+            // 情報を返さない herdr でも止まらないよう、不明なら待たない。
+            guard let ready = latest?.interactiveReady else { return latest }
+            if ready { return latest }
+            Thread.sleep(forTimeInterval: 0.3)
+        } while Date() < deadline
+        return latest
+    }
+
     /// Agent が受け付けられる状態になるまで待つ。
     /// 起動直後は信頼確認などで blocked になることがあるため、待てなくてもエラーにはしない。
     @discardableResult

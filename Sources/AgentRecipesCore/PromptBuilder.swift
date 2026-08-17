@@ -18,10 +18,14 @@ public struct PromptBuilder: Sendable {
 
     public init(
         clipboard: ClipboardAccess = SystemClipboard(),
+        defaultWorkingDirectory: String? = nil,
         variables: VariableResolver? = nil
     ) {
         self.arguments = ArgumentResolver(clipboard: clipboard)
-        self.variables = variables ?? VariableResolver(clipboard: clipboard)
+        self.variables = variables ?? VariableResolver(
+            clipboard: clipboard,
+            defaultWorkingDirectory: defaultWorkingDirectory
+        )
     }
 
     public func initialValues(for recipe: Recipe) -> [String: String] {

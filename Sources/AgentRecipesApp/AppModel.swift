@@ -593,14 +593,27 @@ struct RunResult: Identifiable {
 
     /// pane 全体ではなく、最後のやり取りだけを見せる。
     static func trimToLastAnswer(_ output: String) -> String {
-        let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        // 区切り線 (─────) の最後の塊以降を答えとみなす。
-        if let index = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("────") }),
-           index > 0 {
-            let head = lines[..<index].suffix(60)
-            return (head + lines[index...]).joined(separator: "\n")
+        var lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        // 末尾の入力欄とステータスバー (区切り線に挟まれた部分) は答えではないので落とす。
+        let isSeparator: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).hasPrefix("────") }
+        if let last = lines.lastIndex(where: isSeparator) {
+            let head = lines[..<last]
+            lines = Array(head.lastIndex(where: isSeparator).map { Array(lines[..<$0]) } ?? Array(head))
         }
-        return lines.suffix(60).joined(separator: "\n")
+
+        // 起動直後のセッションでは Welcome バナーが残るので、その枠の後ろだけを見る。
+        if let banner = lines.lastIndex(where: { $0.contains("╰") || $0.contains("╯") }) {
+            lines = Array(lines[lines.index(after: banner)...])
+        }
+
+        while let first = lines.first, first.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeFirst()
+        }
+        while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
+        }
+        return lines.suffix(80).joined(separator: "\n")
     }
 }
 

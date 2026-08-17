@@ -53,7 +53,7 @@ public struct RecipeRunner: Sendable {
         self.agentKind = agentKind
         self.defaultWorkingDirectory = defaultWorkingDirectory
         self.client = client
-        self.builder = PromptBuilder(clipboard: clipboard)
+        self.builder = PromptBuilder(clipboard: clipboard, defaultWorkingDirectory: defaultWorkingDirectory)
         self.targetResolver = TargetResolver()
         self.clipboard = clipboard
         self.history = history
@@ -180,7 +180,10 @@ public struct RecipeRunner: Sendable {
         let uniqueName = Recipe.makeID(from: "\(kind)-\(pane.id)")
         let started = try startAgentWhenPaneIsReady(name: uniqueName, kind: kind, pane: pane.id)
         // 起動直後は信頼確認などで一時的に受け付けない状態になりうるので待つ。
-        return client.waitForAgent(target: started.id) ?? started
+        let settled = client.waitForAgent(target: started.id) ?? started
+        // status が idle でも TUI が描き終わっていないことがあり、
+        // その間に送った Prompt は握りつぶされる。入力可能になるまで待つ。
+        return client.waitUntilInteractive(target: settled.id) ?? settled
     }
 
     /// tab 作成直後はシェルの初期化が終わるまで `agent_pane_busy` になることがある。
