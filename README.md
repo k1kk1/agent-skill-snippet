@@ -19,7 +19,7 @@ Sources/
   HerdrKit/           HerdrClient (herdr CLI との唯一の接点) / TargetResolver / RecipeRunner
   agentrecipes/       CLI
   AgentRecipesApp/    MenuBar UI / Run Form / Recipe Editor / Settings
-Tests/AgentRecipesCoreTests/   83 tests
+Tests/AgentRecipesCoreTests/   120 tests
 ```
 
 パイプラインは仕様どおりの分割:
