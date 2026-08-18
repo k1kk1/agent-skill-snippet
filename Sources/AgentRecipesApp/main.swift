@@ -29,9 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
+            // アプリアイコン (紙飛行機) に合わせる。
+            // 細かい記号はメニューバーの大きさだと潰れて読み取りにくい。
             button.image = NSImage(
-                systemSymbolName: "list.bullet.rectangle",
+                systemSymbolName: "paperplane.fill",
                 accessibilityDescription: "Agent Recipes"
+            )?.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
             )
             // シンボルが読めない環境でも必ず何か見えるようにしておく。
             if button.image == nil { button.title = "AR" }
