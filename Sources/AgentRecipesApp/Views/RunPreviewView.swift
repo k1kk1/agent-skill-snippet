@@ -25,22 +25,34 @@ struct RunPreviewView: View {
             prompt(preview)
 
             HStack {
-                Toggle("次回から確認しない", isOn: Binding(
-                    get: { !model.settings.previewBeforeRun },
-                    set: { model.settings.previewBeforeRun = !$0 }
-                ))
-                .toggleStyle(.checkbox)
-                .font(.caption)
-                Spacer()
-                Button("キャンセル") { model.cancelPreview() }
-                    .keyboardShortcut(.cancelAction)
-                if preview.mode != .paste {
-                    Button("チャットに入力") { model.runPreview(preview, mode: .paste) }
+                if preview.isPreviewOnly {
+                    Label("プレビュー。実行はしません", systemImage: "eye")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Toggle("次回から確認しない", isOn: Binding(
+                        get: { !model.settings.previewBeforeRun },
+                        set: { model.settings.previewBeforeRun = !$0 }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
                 }
-                Button(preview.mode.displayName) { model.runPreview(preview) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(hasUnansweredChoice(preview))
+                Spacer()
+                if preview.isPreviewOnly {
+                    Button("閉じる") { model.cancelPreview() }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("キャンセル") { model.cancelPreview() }
+                        .keyboardShortcut(.cancelAction)
+                    if preview.mode != .paste {
+                        Button("チャットに入力") { model.runPreview(preview, mode: .paste) }
+                    }
+                    Button(preview.mode.displayName) { model.runPreview(preview) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(hasUnansweredChoice(preview))
+                }
             }
         }
         .padding(16)
@@ -65,6 +77,12 @@ struct RunPreviewView: View {
                 }
             }
             Spacer()
+            if preview.isPreviewOnly {
+                Text("プレビュー")
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.2), in: Capsule())
+            }
             // ボタンと紛らわしくならないよう、モードは控えめなラベルで出す。
             Label(preview.mode.displayName, systemImage: preview.mode.editorIcon)
                 .font(.caption)

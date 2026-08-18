@@ -282,6 +282,19 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// Recipe を編集しながら、実行前の確認画面の見え方を確かめる。
+    func showFormPreview(_ recipe: Recipe) {
+        refreshClipboardSnapshot()
+        previewRequest = RunPreview(
+            recipe: recipe,
+            project: project(for: recipe),
+            mode: recipe.mode.requiresHerdr ? recipe.mode : .submit,
+            values: initialValues(for: recipe),
+            isPreviewOnly: true
+        )
+        PanelPresenter.shared.showPreview(model: self)
+    }
+
     func cancelPreview() {
         previewRequest = nil
         PanelPresenter.shared.closePreview()
@@ -672,6 +685,8 @@ struct RunPreview: Identifiable {
     var mode: ExecutionMode
     /// 解決済みの引数。選択式の引数はこの画面で選び直せる。
     var values: [String: String] = [:]
+    /// 編集中に見え方を確かめるだけのプレビュー。実行はしない。
+    var isPreviewOnly = false
 
     /// この画面で選ばせる引数 (選択肢を持つもの)。
     var choices: [ArgumentSpec] {

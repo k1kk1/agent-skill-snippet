@@ -456,6 +456,14 @@ struct RecipeEditorView: View {
                 .buttonStyle(.borderless)
                 .help("実行")
                 Button {
+                    model.showFormPreview(recipe)
+                } label: {
+                    Image(systemName: "eye")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("実行前の確認画面をプレビューする（実行はしない）")
+                Button {
                     recipe.favorite.toggle()
                 } label: {
                     Image(systemName: recipe.favorite ? "star.fill" : "star")
@@ -681,6 +689,19 @@ struct RecipeEditorView: View {
                 Label("クリップボードへコピーするだけなので、実行先は設定しません。", systemImage: "clipboard")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Divider()
+            HStack(spacing: 8) {
+                Button {
+                    model.showFormPreview(recipe)
+                } label: {
+                    Label("実行前の確認をプレビュー", systemImage: "eye")
+                }
+                Text("実行はせず、確認画面の見え方だけを確かめます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
         }
     }
