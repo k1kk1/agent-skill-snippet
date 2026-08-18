@@ -6,27 +6,12 @@ import SwiftUI
 final class PanelPresenter {
     static let shared = PanelPresenter()
 
-    private var runWindow: NSWindow?
     private var previewWindow: NSWindow?
     private var managerWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var resultWindow: NSWindow?
 
     private init() {}
-
-    func showRunForm(model: AppModel) {
-        let window = runWindow ?? makeWindow(
-            title: "Run Recipe",
-            size: NSSize(width: 500, height: 520),
-            content: RunFormView(model: model)
-        )
-        runWindow = window
-        present(window)
-    }
-
-    func closeRunForm() {
-        runWindow?.close()
-    }
 
     /// 実行前プレビュー。送る Prompt と送信先を見せてから実行する。
     func showPreview(model: AppModel) {

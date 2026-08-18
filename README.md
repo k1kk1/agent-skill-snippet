@@ -18,7 +18,7 @@ Sources/
                       Storage / Projects / Settings / History / Rich Result  ← GUI・Herdr 非依存
   HerdrKit/           HerdrClient (herdr CLI との唯一の接点) / TargetResolver / RecipeRunner
   agentrecipes/       CLI
-  AgentRecipesApp/    MenuBar UI / Run Form / Recipe Editor / Settings
+  AgentRecipesApp/    MenuBar UI / 実行前の確認 / Recipe Editor / Settings
 Tests/AgentRecipesCoreTests/   120 tests
 ```
 
@@ -141,8 +141,8 @@ open -a AgentRecipes --args --manage
 Clipboard も既定値も空で埋まらないときは、**フォームを出さずに「チャットに入力」に切り替える**
 （続きは LLM のチャットで書けばよい）。
 
-フォームが開くのは、Recipe を「実行時に Project を選ぶ」に設定したときと、
-**⌥ + クリック**（引数・送信先・Preview を細かく調整したいとき）だけ。
+**⌥ + クリック**すると、同じ確認画面に引数・補足プロンプト・送信先の指定欄が加わる
+（「実行時に Project を選ぶ」設定や、入力が足りない Recipe では自動でこの表示になる）。
 
 メニュー下部に Herdr の接続状態と Agent 数、応答待ちの Recipe を表示する。
 
@@ -263,6 +263,7 @@ Recipe をクリックすると、**送る Prompt と送信先を確認する画
 - ボタンは「実行」「チャットに入力」「キャンセル」。画面内の「次回から確認しない」でそのまま OFF にできる
 - Manage Recipes の 👁 ボタン（見出し横 / 実行方法セクション）から、**実行せずにこの画面を確認**できる
   （選択肢の見え方や Prompt の仕上がりを、編集しながら試せる）
+- ⌥ クリックのときは同じ画面に全引数・補足プロンプト・送信先 Agent の指定が出る（別フォームは持たない）
 
 ## 実行結果の確認
 

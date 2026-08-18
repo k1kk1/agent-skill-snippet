@@ -27,7 +27,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var mcp: [AgentKind: MCPInspection] = [:]
     @Published private(set) var mcpChecking: Set<AgentKind> = []
 
-    @Published var runRequest: RunRequest?
     /// 実行前プレビューの対象。
     @Published var previewRequest: RunPreview?
     /// Submit の応答結果。Result ウィンドウが参照する。
@@ -239,29 +238,24 @@ final class AppModel: ObservableObject {
     /// - 引数が埋まらないとき: フォームを出さず「チャットに入力」に切り替えて、編集は LLM 側でやってもらう
     /// - ⌥ クリック: 詳細フォーム (引数・送信先・Preview)
     func activate(_ recipe: Recipe, forceForm: Bool = false) {
-        if forceForm || opensForm(recipe) {
-            runRequest = RunRequest(recipe: recipe, project: project(for: recipe))
-            PanelPresenter.shared.showRunForm(model: self)
-            return
-        }
+        refreshClipboardSnapshot()
+        let wantsDetails = forceForm || opensForm(recipe) || needsTyping(recipe)
 
         var mode = recipe.mode
-        if needsTyping(recipe), mode == .submit {
+        if needsTyping(recipe), mode == .submit, !wantsDetails {
             mode = .paste
-            ToastPresenter.shared.show(Toast(
-                message: "\(recipe.name): 入力が必要なのでチャットに入れました。続きは LLM 側で編集してください",
-                isError: false
-            ))
         }
 
-        // 送る前に何が送られるかを見せる (Settings で切り替え、Copy は対象外)。
-        // 選択式の引数がある Recipe は、プレビューを切っていてもここで選んでもらう。
-        if mode.requiresHerdr, settings.previewBeforeRun || needsChoice(recipe) {
+        // 実行前の確認がこの画面 1 つ。⌥ クリックや入力が要るときは詳細まで出す。
+        let showsPreview = wantsDetails
+            || (mode.requiresHerdr && (settings.previewBeforeRun || needsChoice(recipe)))
+        if showsPreview {
             previewRequest = RunPreview(
                 recipe: recipe,
                 project: project(for: recipe),
                 mode: mode,
-                values: initialValues(for: recipe)
+                values: initialValues(for: recipe),
+                showsDetails: wantsDetails
             )
             PanelPresenter.shared.showPreview(model: self)
             return
@@ -278,7 +272,8 @@ final class AppModel: ObservableObject {
             values: preview.values.filter { !$0.value.isEmpty },
             project: preview.project,
             mode: mode ?? preview.mode,
-            agent: nil
+            agent: agents.first { $0.id == preview.agentID },
+            additionalPrompt: preview.additionalPrompt
         )
     }
 
@@ -364,7 +359,6 @@ final class AppModel: ObservableObject {
     /// 送信完了。待機していた場合は Agent の出力を読み取って結果ウィンドウに出す。
     private func finish(_ receipt: RunReceipt, notify: Bool, waited: Bool, pendingID: UUID?) {
         recentIDs = historyRepository.recentRecipeIDs(limit: 5)
-        PanelPresenter.shared.closeRunForm()
         clearPending(pendingID)
 
         guard let agent = receipt.agent else {
@@ -677,18 +671,29 @@ struct ActiveRun: Identifiable {
     var startedAt = Date()
 }
 
-/// 実行前プレビューの対象。
+/// 実行前の確認。⌥ クリックの詳細指定もこの画面で行う。
 struct RunPreview: Identifiable {
     let id = UUID()
     var recipe: Recipe
     var project: Project?
     var mode: ExecutionMode
-    /// 解決済みの引数。選択式の引数はこの画面で選び直せる。
+    /// 解決済みの引数。この画面で編集できる。
     var values: [String: String] = [:]
+    /// Skill が受け付ける場合の補足プロンプト。
+    var additionalPrompt: String = ""
+    /// 送信先を明示するときの pane id。空なら自動で決める。
+    var agentID: String = ""
+    /// すべての入力欄と送信先を出す (⌥ クリック / Project を選ぶ Recipe)。
+    var showsDetails = false
     /// 編集中に見え方を確かめるだけのプレビュー。実行はしない。
     var isPreviewOnly = false
 
-    /// この画面で選ばせる引数 (選択肢を持つもの)。
+    /// 画面に出す引数。通常は選択式だけ、詳細表示ではすべて。
+    var editableArguments: [ArgumentSpec] {
+        showsDetails ? recipe.arguments : choices
+    }
+
+    /// 選択肢を持つ引数。
     var choices: [ArgumentSpec] {
         recipe.arguments.filter { $0.type == .choice && !$0.normalizedOptions.isEmpty }
     }
@@ -743,17 +748,6 @@ struct RunResult: Identifiable {
         }
         return lines.suffix(80).joined(separator: "\n")
     }
-}
-
-struct RunRequest: Identifiable {
-    let id = UUID()
-    var recipe: Recipe
-    var project: Project?
-    var values: [String: String] = [:]
-    var additionalPrompt: String = ""
-    var modeOverride: ExecutionMode?
-    /// フォームで送信先を選ぶときの候補。
-    var candidates: [HerdrAgent] = []
 }
 
 struct Toast: Identifiable, Equatable {

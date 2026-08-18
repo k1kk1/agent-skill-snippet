@@ -81,10 +81,10 @@ struct MenuBarView: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(model.recipes.isEmpty ? "Recipe がまだありません" : "一致する Recipe がありません")
+            Text(model.recipes.isEmpty ? "Skill を設定すると、ここに並びます" : "一致する Recipe がありません")
                 .foregroundStyle(.secondary)
             if model.recipes.isEmpty {
-                Button("Recipe を作成...") {
+                Button("Manage Recipes...") {
                     dismiss()
                     PanelPresenter.shared.showManager(model: model)
                 }

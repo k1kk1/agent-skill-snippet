@@ -21,7 +21,7 @@ struct RunPreviewView: View {
     private func content(_ preview: RunPreview) -> some View {
         VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
             header(preview)
-            choices(preview)
+            inputs(preview)
             destination(preview)
             prompt(preview)
 
@@ -44,13 +44,16 @@ struct RunPreviewView: View {
                 } else {
                     Button("キャンセル") { model.cancelPreview() }
                         .keyboardShortcut(.cancelAction)
-                    if preview.mode != .paste {
-                        Button("チャットに入力") { model.runPreview(preview, mode: .paste) }
+                    ForEach(ExecutionMode.allCases.filter { $0 != preview.mode }, id: \.self) { mode in
+                        if preview.showsDetails || mode == .paste {
+                            Button(mode.displayName) { model.runPreview(preview, mode: mode) }
+                                .disabled(mode.requiresHerdr && !model.connection.isHealthy)
+                        }
                     }
                     Button(preview.mode.displayName) { model.runPreview(preview) }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(hasUnansweredChoice(preview))
+                        .disabled(hasMissingInput(preview))
                 }
             }
             .controlSize(.large)
@@ -61,9 +64,9 @@ struct RunPreviewView: View {
         .onAppear { model.refreshHerdr() }
     }
 
-    /// 必須の選択がまだ埋まっていないか。
-    private func hasUnansweredChoice(_ preview: RunPreview) -> Bool {
-        preview.choices.contains { argument in
+    /// 必須の入力がまだ埋まっていないか。
+    private func hasMissingInput(_ preview: RunPreview) -> Bool {
+        preview.recipe.arguments.contains { argument in
             argument.required && (preview.values[argument.name] ?? "").isEmpty
         }
     }
@@ -91,14 +94,15 @@ struct RunPreviewView: View {
         }
     }
 
-    /// 選択式の引数。ここで選んだ値がそのまま Prompt に入る。
+    /// 引数の入力。通常は選択式だけ、⌥ クリックなどの詳細表示ではすべて出す。
     @ViewBuilder
-    private func choices(_ preview: RunPreview) -> some View {
-        if !preview.choices.isEmpty {
+    private func inputs(_ preview: RunPreview) -> some View {
+        let arguments = preview.editableArguments
+        if !arguments.isEmpty || (preview.showsDetails && preview.recipe.acceptsAdditionalPrompt) {
             SectionBox(title: "入力", systemImage: "slider.horizontal.3") {
-                ForEach(preview.choices) { argument in
+                ForEach(arguments) { argument in
                     LabeledContent {
-                        ChoiceField(
+                        ArgumentField(
                             argument: argument,
                             value: Binding(
                                 get: { model.previewRequest?.values[argument.name] ?? "" },
@@ -114,6 +118,17 @@ struct RunPreviewView: View {
                         }
                     }
                 }
+                if preview.showsDetails, preview.recipe.acceptsAdditionalPrompt {
+                    LabeledContent("補足") {
+                        TextEditor(text: Binding(
+                            get: { model.previewRequest?.additionalPrompt ?? "" },
+                            set: { model.previewRequest?.additionalPrompt = $0 }
+                        ))
+                        .font(.system(.callout, design: .monospaced))
+                        .frame(height: 60)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
+                    }
+                }
             }
         }
     }
@@ -123,14 +138,48 @@ struct RunPreviewView: View {
         let agent = model.settings.agent
         let cwd = preview.project?.path ?? model.settings.expandedDefaultWorkingDirectory
         return SectionBox(title: "送信先", systemImage: "paperplane") {
-            LabeledContent("Agent") {
-                HStack(spacing: 6) {
-                    AgentBrandIcon(kind: agent, active: true, size: 15)
-                    Text(sessionText(preview, agent: agent))
+            if preview.showsDetails {
+                if preview.recipe.target.askProject {
+                    LabeledContent("作業フォルダ") {
+                        Picker("", selection: Binding(
+                            get: { model.previewRequest?.project?.id ?? "" },
+                            set: { id in
+                                model.previewRequest?.project = model.projects.first { $0.id == id }
+                            }
+                        )) {
+                            Text("指定なし").tag("")
+                            ForEach(model.projects) { project in
+                                Text(project.name).tag(project.id)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                }
+                LabeledContent("送信先 Agent") {
+                    Picker("", selection: Binding(
+                        get: { model.previewRequest?.agentID ?? "" },
+                        set: { model.previewRequest?.agentID = $0 }
+                    )) {
+                        Text(sessionText(preview, agent: agent)).tag("")
+                        ForEach(model.candidates(for: preview.recipe, project: preview.project)) { candidate in
+                            Text("\(candidate.displayName)\(candidate.isIdle ? " (idle)" : "")")
+                                .tag(candidate.id)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            } else {
+                LabeledContent("送信先 Agent") {
+                    HStack(spacing: 6) {
+                        AgentBrandIcon(kind: agent, active: true, size: 15)
+                        Text(sessionText(preview, agent: agent))
+                    }
                 }
             }
-            LabeledContent("作業フォルダ") {
-                Text(cwd).lineLimit(1).truncationMode(.head)
+            if !preview.showsDetails || !preview.recipe.target.askProject {
+                LabeledContent("作業フォルダ") {
+                    Text(cwd).lineLimit(1).truncationMode(.head)
+                }
             }
             if let skill = preview.recipe.skill {
                 LabeledContent("Skill") { Text(skill.displayName) }

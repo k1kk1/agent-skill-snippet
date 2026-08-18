@@ -832,64 +832,50 @@ struct RecipeEditorView: View {
                 .foregroundStyle(.secondary)
 
             ForEach($recipe.arguments) { $argument in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Prompt の変数名")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            TextField("例: focus", text: $argument.name)
-                                .font(.system(.body, design: .monospaced))
+                GroupBox {
+                    VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
+                        LabeledContent("変数名") {
+                            HStack(spacing: Metrics.itemSpacing) {
+                                TextField("例: focus", text: $argument.name)
+                                    .font(.system(.body, design: .monospaced))
+                                    .frame(maxWidth: 180)
+                                Text("Prompt では {{\(argument.name)}}")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                            }
                         }
-                        .frame(width: 130)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("フォームでの表示名")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        LabeledContent("表示名") {
                             TextField("例: 確認項目", text: Binding(
                                 get: { argument.label ?? "" },
                                 set: { argument.label = $0.isEmpty ? nil : $0 }
                             ))
                         }
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("形式")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Picker("", selection: $argument.type) {
-                                ForEach(ArgumentType.allCases, id: \.self) { type in
-                                    Text(type.displayName).tag(type)
+                        LabeledContent("形式") {
+                            HStack(spacing: Metrics.itemSpacing) {
+                                Picker("", selection: $argument.type) {
+                                    ForEach(ArgumentType.allCases, id: \.self) { type in
+                                        Text(type.displayName).tag(type)
+                                    }
                                 }
+                                .labelsHidden()
+                                .frame(width: 120)
+                                Toggle("必須", isOn: $argument.required)
+                                Toggle("Clipboard を既定値に", isOn: $argument.useClipboardAsDefault)
+                                    .disabled(argument.type == .choice)
+                                Spacer(minLength: 0)
                             }
-                            .labelsHidden()
                         }
-                        .frame(width: 110)
-                        Button {
-                            recipe.arguments.removeAll { $0.id == argument.id }
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    HStack {
-                        Toggle("必須", isOn: $argument.required)
-                        Toggle("Clipboard を既定値に", isOn: $argument.useClipboardAsDefault)
-                            .disabled(argument.type == .choice)
                         LabeledContent("既定値") {
                             TextField("未指定", text: Binding(
                                 get: { argument.defaultValue ?? "" },
                                 set: { argument.defaultValue = $0.isEmpty ? nil : $0 }
                             ))
                         }
-                    }
-                    .font(.caption)
 
-                    if argument.type == .choice {
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("選択肢（カンマ区切り）")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                TextField("例: 全体像, API, セキュリティ", text: Binding(
+                        if argument.type == .choice {
+                            LabeledContent("選択肢") {
+                                TextField("カンマ区切り。例: 全体像, API, セキュリティ", text: Binding(
                                     get: { argument.options.joined(separator: ", ") },
                                     set: { text in
                                         argument.options = text
@@ -899,31 +885,35 @@ struct RecipeEditorView: View {
                                     }
                                 ))
                             }
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("見せ方")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Picker("", selection: $argument.choiceStyle) {
-                                    ForEach(ChoiceStyle.allCases, id: \.self) { style in
-                                        Text(style.displayName).tag(style)
+                            LabeledContent("選ばせ方") {
+                                HStack(spacing: Metrics.itemSpacing) {
+                                    Picker("", selection: $argument.choiceStyle) {
+                                        ForEach(ChoiceStyle.allCases, id: \.self) { style in
+                                            Text(style.displayName).tag(style)
+                                        }
                                     }
+                                    .labelsHidden()
+                                    .frame(width: 130)
+                                    Toggle("複数選択", isOn: $argument.allowsMultiple)
+                                    Spacer(minLength: 0)
                                 }
-                                .labelsHidden()
                             }
-                            .frame(width: 130)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("選び方")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Toggle("複数選択", isOn: $argument.allowsMultiple)
-                            }
-                            .frame(width: 100)
                         }
-                        .font(.caption)
+                    }
+                    .padding(.top, 2)
+                } label: {
+                    HStack {
+                        Text(argument.displayLabel.isEmpty ? argument.name : argument.displayLabel)
+                        Spacer()
+                        Button(role: .destructive) {
+                            recipe.arguments.removeAll { $0.id == argument.id }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("この引数を削除")
                     }
                 }
-                .padding(8)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
             }
         }
     }
