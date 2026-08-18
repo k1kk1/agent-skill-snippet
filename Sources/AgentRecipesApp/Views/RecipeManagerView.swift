@@ -218,13 +218,22 @@ struct RecipeManagerView: View {
         if draft.id.trimmingCharacters(in: .whitespaces).isEmpty {
             draft.id = model.recipeRepository.uniqueID(base: Recipe.makeID(from: draft.name))
         }
+        // Skill から作った Recipe は、保存するとサイドバーの別の場所へ動く。
+        // 「消えた」と見えないよう、どこへ入ったかを伝える。
+        let isNew = !model.recipes.contains { $0.id == originalID }
         model.save(draft, originalID: originalID)
         originalID = draft.id
         // 保存すると Skill 行はカテゴリ内の Recipe 行に変わるので、選択もそちらへ移す。
         selectedItem = .recipe(draft.id)
         self.draft = draft
         if showToast {
-            ToastPresenter.shared.show(Toast(message: "'\(draft.name)' を保存しました", isError: false))
+            let destination = (draft.category?.isEmpty == false) ? draft.category! : "Other"
+            ToastPresenter.shared.show(Toast(
+                message: isNew
+                    ? "'\(draft.name)' を \(destination) に追加しました"
+                    : "'\(draft.name)' を保存しました",
+                isError: false
+            ))
         }
     }
 
@@ -572,6 +581,12 @@ struct RecipeEditorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("送信先", systemImage: "paperplane")
                         .font(.subheadline.weight(.semibold))
+                    // 名前が似ていて取り違えやすいので、違いをここで 1 行示す。
+                    Text("Herdr workspace は Agent をまとめる Herdr 側のグループ、"
+                         + "ローカル作業フォルダは Agent が動くディレクトリ (cwd) です。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     targetRow("Agent の選び方") {
                         Picker("", selection: $recipe.target.session) {
                             ForEach(SessionPolicy.allCases, id: \.self) { policy in

@@ -9,29 +9,58 @@ struct MenuBarView: View {
     @FocusState private var searchFocused: Bool
     /// 展開している Projects / Categories。
     @State private var expandedGroups: Set<String> = []
+    /// ↑↓ で選んでいる行。Enter で実行する。
+    @State private var highlightedID: Recipe.ID?
+
+    /// Projects / Categories に分けるのは、数が多いときだけにする。
+    /// 件数が少ないと、階層が深いぶん探しにくくなる。
+    private static let groupingThreshold = 12
+
+    /// ↑↓ でたどれる行。検索中は結果、通常は画面に出ている順。
+    private var navigable: [Recipe] {
+        if !model.searchText.isEmpty { return model.filtered }
+        var seen = Set<Recipe.ID>()
+        return (model.favorites + model.recents + flatRecipes).filter { seen.insert($0.id).inserted }
+    }
+
+    /// グループを作らないときに並べる Recipe。
+    private var flatRecipes: [Recipe] {
+        let pinned = Set((model.favorites + model.recents).map(\.id))
+        return model.filtered.filter { !pinned.contains($0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: Metrics.labelSpacing) {
-                    if model.filtered.isEmpty {
-                        emptyState
-                    } else if !model.searchText.isEmpty {
-                        section("Results", model.filtered)
-                    } else {
-                        if !model.favorites.isEmpty { section("Favorites", model.favorites) }
-                        if !model.recents.isEmpty { section("Recent", model.recents) }
-                        projectsSection
-                        categoriesSection
-                        if !model.uncategorized.isEmpty { section("Other", model.uncategorized) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Metrics.labelSpacing) {
+                        if model.filtered.isEmpty {
+                            emptyState
+                        } else if !model.searchText.isEmpty {
+                            section("Results", model.filtered)
+                        } else {
+                            if !model.favorites.isEmpty { section("Favorites", model.favorites) }
+                            if !model.recents.isEmpty { section("Recent", model.recents) }
+                            if model.recipes.count > Self.groupingThreshold {
+                                projectsSection
+                                categoriesSection
+                                if !model.uncategorized.isEmpty { section("Other", model.uncategorized) }
+                            } else if !flatRecipes.isEmpty {
+                                section("All", flatRecipes)
+                            }
+                        }
                     }
+                    .padding(.vertical, Metrics.itemSpacing)
                 }
-                .padding(.vertical, Metrics.itemSpacing)
+                .frame(maxHeight: 400)
+                .onChange(of: highlightedID) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(id, anchor: .center) }
+                }
             }
-            .frame(maxHeight: 400)
 
             Divider()
             herdrStatus
@@ -60,11 +89,12 @@ struct MenuBarView: View {
             TextField("Search...", text: $model.searchText)
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
-                .onSubmit {
-                    model.filtered.first.map {
-                        dismiss()
-                        model.activate($0)
-                    }
+                .onSubmit { activateHighlighted() }
+                // ↑↓ で選べないと、検索したあと結局マウスに戻ることになる。
+                .onKeyPress(.downArrow) { moveHighlight(by: 1) }
+                .onKeyPress(.upArrow) { moveHighlight(by: -1) }
+                .onChange(of: model.searchText) { _, _ in
+                    highlightedID = model.filtered.first?.id
                 }
             // 入力の有無でボタンが出入りすると文字位置がずれるので、場所は常に確保する。
             Button {
@@ -154,10 +184,7 @@ struct MenuBarView: View {
             }
             if isExpanded {
                 ForEach(recipes) { recipe in
-                    RecipeRow(recipe: recipe, effectiveMode: model.effectiveMode(recipe)) { forceForm in
-                        dismiss()
-                        model.activate(recipe, forceForm: forceForm)
-                    }
+                    row(recipe)
                 }
             }
         }
@@ -266,12 +293,39 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 2) {
             sectionTitle(title)
             ForEach(recipes) { recipe in
-                RecipeRow(recipe: recipe, effectiveMode: model.effectiveMode(recipe)) { forceForm in
-                    dismiss()
-                    model.activate(recipe, forceForm: forceForm)
-                }
+                row(recipe)
             }
         }
+    }
+
+    private func row(_ recipe: Recipe) -> some View {
+        RecipeRow(
+            recipe: recipe,
+            effectiveMode: model.effectiveMode(recipe),
+            isHighlighted: highlightedID == recipe.id
+        ) { forceForm in
+            dismiss()
+            model.activate(recipe, forceForm: forceForm)
+        }
+        .id(recipe.id)
+    }
+
+    /// ↑↓ の移動。端では止める (行き過ぎて先頭に戻ると、どこにいるか分からなくなる)。
+    private func moveHighlight(by offset: Int) -> KeyPress.Result {
+        let rows = navigable
+        guard !rows.isEmpty else { return .ignored }
+        let current = highlightedID.flatMap { id in rows.firstIndex { $0.id == id } }
+        let next = min(max((current ?? -1) + offset, 0), rows.count - 1)
+        highlightedID = rows[next].id
+        return .handled
+    }
+
+    private func activateHighlighted() {
+        let rows = navigable
+        let recipe = highlightedID.flatMap { id in rows.first { $0.id == id } } ?? rows.first
+        guard let recipe else { return }
+        dismiss()
+        model.activate(recipe)
     }
 
     /// セクション見出し。macOS のサイドバー見出しに合わせて小さめ・控えめにする。
@@ -288,6 +342,11 @@ struct MenuBarView: View {
             MenuRowButton(title: "Manage Recipes...") {
                 dismiss()
                 PanelPresenter.shared.showManager(model: model)
+            }
+            // 結果を閉じたあとでも辿れる入口。Settings の中だけだと見つからない。
+            MenuRowButton(title: "History...") {
+                dismiss()
+                PanelPresenter.shared.showSettings(model: model, tab: .history)
             }
             MenuRowButton(title: "Settings...") {
                 dismiss()
@@ -306,33 +365,56 @@ struct RecipeRow: View {
     let recipe: Recipe
     /// クリックしたときに実際に起きること。
     let effectiveMode: ExecutionMode
+    /// ↑↓ で選ばれている行。
+    var isHighlighted = false
     let action: (_ forceForm: Bool) -> Void
 
     @State private var hovering = false
 
     var body: some View {
-        Button {
-            action(NSEvent.modifierFlags.contains(.option))
-        } label: {
-            HStack(spacing: 10) {
-                Text(recipe.name)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                RecipeInputBadges(recipe: recipe, compact: true)
-                // クリックで何が起きるかは、文字ではなくアイコンで示す。
-                Image(systemName: icon)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20)
+        HStack(spacing: 0) {
+            Button {
+                action(NSEvent.modifierFlags.contains(.option))
+            } label: {
+                HStack(spacing: 10) {
+                    Text(recipe.name)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    RecipeInputBadges(recipe: recipe, compact: true)
+                    // クリックで何が起きるかは、文字ではなくアイコンで示す。
+                    Image(systemName: icon)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(hovering ? Color.accentColor.opacity(0.15) : .clear)
+            .buttonStyle(.plain)
+            .help("\(recipe.description ?? recipe.name)\n\(effectiveMode.explanation)")
+
+            // ⌥ クリックの入口は、見えていないと気づけない。
+            Button {
+                action(true)
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering || isHighlighted ? 1 : 0.25)
+            .help("入力と送信先を指定して実行 (⌥クリックでも開きます)")
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(background)
         .onHover { hovering = $0 }
-        .help("\(recipe.description ?? recipe.name)\n\(effectiveMode.explanation)\n⌥クリックで詳細フォーム")
+    }
+
+    private var background: Color {
+        if isHighlighted { return Color.accentColor.opacity(0.25) }
+        return hovering ? Color.accentColor.opacity(0.15) : .clear
     }
 
     private var icon: String {

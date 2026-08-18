@@ -221,6 +221,16 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(history.recent().map(\.recipeID), ["r2", "r1", "r0"])
     }
 
+    /// 履歴から結果を開き直せるよう、pane を保存して読み戻せること。
+    func testHistoryKeepsPaneID() {
+        let history = HistoryRepository(layout: layout, limit: 5)
+        history.append(HistoryEntry(
+            recipeID: "r", recipeName: "R", agent: "codex", paneID: "%42",
+            mode: .submit, result: .success
+        ))
+        XCTAssertEqual(history.recent().first?.paneID, "%42")
+    }
+
     func testHistoryIsTrimmedToLimit() {
         let history = HistoryRepository(layout: layout, limit: 3)
         for i in 0..<6 {

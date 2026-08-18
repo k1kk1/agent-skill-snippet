@@ -29,8 +29,11 @@ final class AppModel: ObservableObject {
 
     /// 実行前プレビューの対象。
     @Published var previewRequest: RunPreview?
-    /// Submit の応答結果。Result ウィンドウが参照する。
-    @Published var result: RunResult?
+    /// Submit の応答結果。新しい順に持ち、Result ウィンドウで切り替えられる。
+    /// 1 件しか持たないと、続けて実行したときに前の結果が消えてしまう。
+    @Published private(set) var results: [RunResult] = []
+    /// Result ウィンドウで表示している結果。
+    @Published var selectedResultID: RunResult.ID?
     /// 確認への回答を送っている最中。
     @Published var isAnswering = false
     /// 実行中の Recipe。Result ウィンドウでローディングを出すために持つ。
@@ -48,6 +51,36 @@ final class AppModel: ObservableObject {
     private var clipboardSnapshot = ""
     private var hasClipboardSnapshot = false
     private var initialValuesCache: [Recipe.ID: [String: String]] = [:]
+    /// 実行中の Task。中止ボタンから止める。
+    private var runTask: Task<Void, Never>?
+
+    /// 残しておく結果の数。
+    static let resultLimit = 10
+
+    /// 表示中の結果。
+    var result: RunResult? {
+        get { results.first { $0.id == selectedResultID } ?? results.first }
+        set {
+            guard let newValue else { return }
+            if let index = results.firstIndex(where: { $0.id == newValue.id }) {
+                results[index] = newValue
+            } else {
+                results.insert(newValue, at: 0)
+                if results.count > Self.resultLimit { results.removeLast(results.count - Self.resultLimit) }
+            }
+            selectedResultID = newValue.id
+        }
+    }
+
+    /// 利用者が答えないと先に進まない結果があるか。メニューバーのバッジに使う。
+    var needsAttention: Bool {
+        results.contains { $0.pendingPrompt != nil || $0.question != nil }
+    }
+
+    func clearResults() {
+        results.removeAll()
+        selectedResultID = nil
+    }
 
     init() {
         let base = StorageLayout()
@@ -316,14 +349,14 @@ final class AppModel: ObservableObject {
         // 実行中であることを見せる。Submit は待ち時間が長いので特に必要。
         if mode.requiresHerdr {
             activeRun = ActiveRun(recipeName: recipe.name, mode: mode)
-            result = nil
             PanelPresenter.shared.showResult(model: self)
         }
         let onStage: @Sendable (RunStage) -> Void = { stage in
             Task { @MainActor in self.activeRun?.stage = stage }
         }
 
-        Task {
+        runTask?.cancel()
+        runTask = Task {
             do {
                 let outcome: RunOutcome = try await HerdrBackground.run {
                     if let agent {
@@ -344,6 +377,8 @@ final class AppModel: ObservableObject {
                         modeOverride: mode, waitTimeoutMS: waitMS, progress: onStage
                     )
                 }
+                // 中止したあとに結果を出さない (Herdr の呼び出し自体は止められない)。
+                guard !Task.isCancelled else { return }
                 switch outcome {
                 case .completed(let receipt):
                     self.finish(receipt, notify: notify, waited: waitMS != nil, pendingID: pendingID)
@@ -351,9 +386,33 @@ final class AppModel: ObservableObject {
             } catch {
                 self.clearPending(pendingID)
                 self.activeRun = nil
+                guard !Task.isCancelled else { return }
+                // 失敗の理由はトーストだと数秒で消えてしまうので、結果として残す。
+                if mode.requiresHerdr {
+                    self.result = RunResult(
+                        recipeName: recipe.name,
+                        agent: nil,
+                        rawOutput: "",
+                        failure: error.localizedDescription
+                    )
+                    PanelPresenter.shared.showResult(model: self)
+                }
                 ToastPresenter.shared.show(Toast(message: error.localizedDescription, isError: true))
             }
         }
+    }
+
+    /// 実行の待機をやめる。Herdr 側の Agent は動き続けるので、そのことも伝える。
+    func cancelActiveRun() {
+        guard activeRun != nil else { return }
+        runTask?.cancel()
+        runTask = nil
+        activeRun = nil
+        pendingResults.removeAll()
+        ToastPresenter.shared.show(Toast(
+            message: "待機をやめました。Agent は動き続けているので、Herdr で確認できます。",
+            isError: false
+        ))
     }
 
     /// 送信完了。待機していた場合は Agent の出力を読み取って結果ウィンドウに出す。
@@ -405,22 +464,24 @@ final class AppModel: ObservableObject {
 
     /// Agent の確認に答える。キーを送ってから、少し待って結果を読み直す。
     func answer(_ option: AgentQuestion.Option, for result: RunResult) {
+        guard let pane = result.agent?.paneID else { return }
         sendToAgent(result: result) { client in
-            try client.sendKeys(option.keys, toPane: result.agent.paneID)
+            try client.sendKeys(option.keys, toPane: pane)
         }
     }
 
     /// 確認に自由入力で答える。
     func answer(text: String, for result: RunResult) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, let pane = result.agent?.paneID else { return }
         sendToAgent(result: result) { client in
-            try client.sendText(trimmed, toPane: result.agent.paneID)
-            try client.sendKeys(["enter"], toPane: result.agent.paneID)
+            try client.sendText(trimmed, toPane: pane)
+            try client.sendKeys(["enter"], toPane: pane)
         }
     }
 
     private func sendToAgent(result: RunResult, _ action: @escaping @Sendable (HerdrClient) throws -> Void) {
+        guard let agent = result.agent else { return }
         let client = makeClient()
         let timeoutMS = settings.resultTimeoutSeconds * 1000
         // 起動時の確認で送れていない Prompt があれば、答えたあとに続けて送る。
@@ -435,28 +496,26 @@ final class AppModel: ObservableObject {
                     return nil
                 }
                 // 答えたあとの続きを待ってから読む。待てなくても読み直しはする。
-                _ = client.waitForAgent(target: result.agent.id, timeoutMS: timeoutMS)
+                _ = client.waitForAgent(target: agent.id, timeoutMS: timeoutMS)
                 var sentPending = false
                 if let pending {
-                    let agent = client.waitUntilInteractive(target: result.agent.id)
-                    if (agent?.status ?? "").lowercased() != "blocked" {
-                        try? client.promptAgent(pending, target: result.agent.id, waitTimeoutMS: timeoutMS)
+                    let latest = client.waitUntilInteractive(target: agent.id)
+                    if (latest?.status ?? "").lowercased() != "blocked" {
+                        try? client.promptAgent(pending, target: agent.id, waitTimeoutMS: timeoutMS)
                         sentPending = true
                     }
                 }
-                return ((try? client.readPane(result.agent.paneID, lines: 200)) ?? "", sentPending)
+                return ((try? client.readPane(agent.paneID, lines: 200)) ?? "", sentPending)
             }
             self.isAnswering = false
             guard let outcome else {
                 ToastPresenter.shared.show(Toast(message: "Agent へ送信できませんでした", isError: true))
                 return
             }
-            self.result = RunResult(
-                recipeName: result.recipeName,
-                agent: result.agent,
-                rawOutput: outcome.output,
-                pendingPrompt: outcome.sentPending ? nil : pending
-            )
+            var updated = result
+            updated.rawOutput = outcome.output
+            updated.pendingPrompt = outcome.sentPending ? nil : pending
+            self.result = updated
             if outcome.sentPending, notify {
                 ToastPresenter.shared.show(Toast(
                     message: "\(result.recipeName) — 確認に答えたので Prompt を送りました",
@@ -468,20 +527,37 @@ final class AppModel: ObservableObject {
 
     /// 結果を読み直す。
     func refreshResult() {
-        guard let result else { return }
+        guard let result, let agent = result.agent else { return }
         let client = makeClient()
         isAnswering = true
         Task {
             let output = await HerdrBackground.run {
-                (try? client.readPane(result.agent.paneID, lines: 200)) ?? ""
+                (try? client.readPane(agent.paneID, lines: 200)) ?? ""
             }
             self.isAnswering = false
-            self.result = RunResult(
-                recipeName: result.recipeName,
-                agent: result.agent,
-                rawOutput: output,
-                pendingPrompt: result.pendingPrompt
-            )
+            var updated = result
+            updated.rawOutput = output
+            self.result = updated
+        }
+    }
+
+    /// 履歴から結果を開き直す。閉じたら二度と見られない、という状態を避ける。
+    func reopenResult(_ entry: HistoryEntry) {
+        guard let paneID = entry.paneID else { return }
+        guard let agent = agents.first(where: { $0.paneID == paneID }) else {
+            ToastPresenter.shared.show(Toast(
+                message: "この Agent はもう Herdr にありません",
+                isError: true
+            ))
+            return
+        }
+        let client = makeClient()
+        isAnswering = true
+        Task {
+            let output = await HerdrBackground.run { (try? client.readPane(paneID, lines: 200)) ?? "" }
+            self.isAnswering = false
+            self.result = RunResult(recipeName: entry.recipeName, agent: agent, rawOutput: output)
+            PanelPresenter.shared.showResult(model: self)
         }
     }
 
@@ -702,17 +778,27 @@ struct RunPreview: Identifiable {
 struct RunResult: Identifiable {
     let id = UUID()
     var recipeName: String
-    var agent: HerdrAgent
+    /// 送信先。実行そのものに失敗した場合は決まっていない。
+    var agent: HerdrAgent?
     /// pane から読んだ全文。リッチ結果の JSON はここから読む。
     var rawOutput: String
     /// まだ届いていない Prompt。起動時の確認に答えたあとで送る。
     var pendingPrompt: String?
+    /// 実行に失敗した理由。トーストだけだと消えてしまうので結果として残す。
+    var failure: String?
+    var finishedAt = Date()
 
     /// Agent が確認待ちで止まっている場合の質問。
-    var question: AgentQuestion? { AgentQuestionParser.parse(rawOutput) }
+    var question: AgentQuestion? {
+        guard failure == nil, agent != nil else { return nil }
+        return AgentQuestionParser.parse(rawOutput)
+    }
 
     /// リッチ結果は切り詰めると JSON が壊れるので、全文から解析する。
-    var presentation: ResultPresentation { RichResultParser.parse(rawOutput) }
+    var presentation: ResultPresentation {
+        if let failure { return .plain(failure) }
+        return RichResultParser.parse(rawOutput)
+    }
 
     var isRich: Bool {
         if case .rich = presentation { return true }
@@ -721,7 +807,8 @@ struct RunResult: Identifiable {
 
     /// 表示・コピー用のテキスト。プレーン表示のときだけ末尾のやり取りに絞る。
     var output: String {
-        isRich ? rawOutput : RunResult.trimToLastAnswer(rawOutput)
+        if let failure { return failure }
+        return isRich ? rawOutput : RunResult.trimToLastAnswer(rawOutput)
     }
 
     /// pane 全体ではなく、最後のやり取りだけを見せる。

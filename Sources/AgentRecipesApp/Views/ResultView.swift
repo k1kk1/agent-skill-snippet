@@ -12,7 +12,7 @@ struct ResultView: View {
     var body: some View {
         Group {
             if let run = model.activeRun {
-                RunningView(run: run)
+                RunningView(run: run) { model.cancelActiveRun() }
             } else if let result = model.result {
                 content(result)
             } else {
@@ -28,6 +28,13 @@ struct ResultView: View {
     private func content(_ result: RunResult) -> some View {
         VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
             header(result)
+
+            if let failure = result.failure {
+                Label(failure, systemImage: "exclamationmark.octagon.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if result.pendingPrompt != nil {
                 Label(
@@ -68,10 +75,12 @@ struct ResultView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             } trailing: {
-                Button {
-                    model.focusInHerdr(result.agent)
-                } label: {
-                    Label("Herdr で開く", systemImage: "arrow.up.forward.app")
+                if let agent = result.agent {
+                    Button {
+                        model.focusInHerdr(agent)
+                    } label: {
+                        Label("Herdr で開く", systemImage: "arrow.up.forward.app")
+                    }
                 }
                 Button {
                     NSPasteboard.general.clearContents()
@@ -84,34 +93,68 @@ struct ResultView: View {
                 } label: {
                     Label("最新を読む", systemImage: "arrow.clockwise")
                 }
-                .disabled(model.isAnswering)
+                .disabled(model.isAnswering || result.agent == nil)
             }
         }
         .windowPadding()
     }
 
     private func header(_ result: RunResult) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: Metrics.labelSpacing) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(result.recipeName).font(.title3.weight(.semibold))
-                Text(result.agent.displayName).font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Metrics.labelSpacing) {
+            // 続けて実行しても前の結果が消えないよう、履歴として切り替えられるようにする。
+            if model.results.count > 1 {
+                HStack(spacing: Metrics.labelSpacing) {
+                    Picker("結果", selection: Binding(
+                        get: { model.selectedResultID ?? result.id },
+                        set: { model.selectedResultID = $0 }
+                    )) {
+                        ForEach(model.results) { item in
+                            Text(Self.label(for: item)).tag(item.id as RunResult.ID?)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+                    Spacer(minLength: 0)
+                    Button("すべて消す") { model.clearResults() }
+                        .buttonStyle(.link)
+                }
             }
-            Spacer(minLength: 0)
-            if model.isAnswering { ProgressView().controlSize(.small) }
-            if let status = result.agent.status {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.15), in: Capsule())
+            HStack(alignment: .firstTextBaseline, spacing: Metrics.labelSpacing) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.recipeName).font(.title3.weight(.semibold))
+                    Text(result.agent?.displayName ?? "送信できませんでした")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if model.isAnswering { ProgressView().controlSize(.small) }
+                if let status = result.agent?.status {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
             }
         }
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private static func label(for result: RunResult) -> String {
+        let marker = result.failure != nil ? "! " : (result.question != nil ? "? " : "")
+        return "\(marker)\(timeFormatter.string(from: result.finishedAt))  \(result.recipeName)"
     }
 }
 
 /// 実行中の表示。Submit は数十秒かかることがあるので、進み具合と経過時間を出す。
 private struct RunningView: View {
     let run: ActiveRun
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(spacing: Metrics.sectionSpacing) {
@@ -134,10 +177,14 @@ private struct RunningView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            // 誤って実行したときに、待ち続けるしかない状態を作らない。
+            Button("中止", role: .cancel, action: onCancel)
+                .keyboardShortcut(.cancelAction)
             Spacer()
-            Text("結果が返ると、この画面がそのまま結果に切り替わります。")
+            Text("結果が返ると、この画面がそのまま結果に切り替わります。中止しても Agent は動き続けます。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .windowPadding()

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import ServiceManagement
 
@@ -20,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appWindowClickMonitor: Any?
     private var visibilityObservers: [NSObjectProtocol] = []
     private var hasWarnedAboutHiddenStatusItem = false
+    private var attentionObserver: AnyCancellable?
+    private var showsAttentionBadge = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let model = AppModel()
@@ -29,17 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            // アプリアイコン (紙飛行機) に合わせる。
-            // 細かい記号はメニューバーの大きさだと潰れて読み取りにくい。
-            button.image = NSImage(
-                systemSymbolName: "paperplane.fill",
-                accessibilityDescription: "Agent Recipes"
-            )?.withSymbolConfiguration(
-                NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-            )
+            button.image = Self.statusImage(attention: false)
             // シンボルが読めない環境でも必ず何か見えるようにしておく。
             if button.image == nil { button.title = "AR" }
-            button.image?.isTemplate = true
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -47,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘ドラッグで動かした位置を次回以降も保持する。
         item.autosaveName = "AgentRecipesStatusItem"
         statusItem = item
+
+        // 確認待ちはメニューを開かないと気づけないので、アイコンで知らせる。
+        attentionObserver = model.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateAttentionBadge() }
 
         let popover = NSPopover()
         popover.behavior = .transient
@@ -124,6 +124,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in self?.recheckStatusItemVisibility() }
             }
         )
+    }
+
+    /// Agent が確認待ちのあいだ、メニューバーのアイコンに点を付ける。
+    private func updateAttentionBadge() {
+        guard let button = statusItem?.button, button.image != nil else { return }
+        let attention = model?.needsAttention == true
+        // 状態が変わったときだけ描き直す (objectWillChange は入力のたびに流れてくる)。
+        guard attention != showsAttentionBadge else { return }
+        showsAttentionBadge = attention
+        button.image = Self.statusImage(attention: attention)
+        button.toolTip = attention ? "Agent が確認を待っています" : "Agent Recipes"
+    }
+
+    /// メニューバーのアイコン。アプリアイコン (紙飛行機) に合わせる。
+    /// 細かい記号はメニューバーの大きさだと潰れて読み取りにくい。
+    private static func statusImage(attention: Bool) -> NSImage? {
+        guard let base = NSImage(
+            systemSymbolName: "paperplane.fill",
+            accessibilityDescription: "Agent Recipes"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        ) else { return nil }
+        base.isTemplate = true
+        guard attention else { return base }
+
+        // ライト／ダークの両方で読めるよう、色ではなく template のまま点を足す。
+        let dot: CGFloat = 5
+        let size = NSSize(width: base.size.width + dot - 1, height: base.size.height)
+        let badged = NSImage(size: size, flipped: false) { _ in
+            base.draw(
+                in: NSRect(origin: .zero, size: base.size),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: NSRect(
+                x: size.width - dot, y: size.height - dot, width: dot, height: dot
+            )).fill()
+            return true
+        }
+        badged.isTemplate = true
+        return badged
     }
 
     /// 見えなくなった瞬間だけ知らせる。見えている間に何度も出さない。

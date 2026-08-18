@@ -375,6 +375,7 @@ public struct RecipeRunner: Sendable {
             recipeName: recipe.name,
             project: project?.name,
             agent: agent?.agentName,
+            paneID: agent?.paneID,
             mode: mode,
             result: result,
             message: message

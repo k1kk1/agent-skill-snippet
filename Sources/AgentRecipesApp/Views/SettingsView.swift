@@ -461,6 +461,14 @@ private struct HistorySettings: View {
                     Text(entry.result.displayName)
                         .foregroundStyle(color(for: entry.result))
                 }.width(80)
+                // 閉じた結果をもう一度見られるようにする。Agent が残っていれば読み直せる。
+                TableColumn("") { entry in
+                    if entry.paneID != nil {
+                        Button("結果を開く") { model.reopenResult(entry) }
+                            .buttonStyle(.link)
+                            .disabled(model.isAnswering)
+                    }
+                }.width(80)
             }
 
             HStack {

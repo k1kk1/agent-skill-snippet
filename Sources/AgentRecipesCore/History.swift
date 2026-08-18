@@ -34,6 +34,8 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     public var timestamp: Date
     public var project: String?
     public var agent: String?
+    /// 送信先の pane。履歴から結果を開き直すために持つ。
+    public var paneID: String?
     public var mode: ExecutionMode
     public var result: Result
     public var message: String?
@@ -45,6 +47,7 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
         timestamp: Date = Date(),
         project: String? = nil,
         agent: String? = nil,
+        paneID: String? = nil,
         mode: ExecutionMode,
         result: Result,
         message: String? = nil
@@ -55,6 +58,7 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
         self.timestamp = timestamp
         self.project = project
         self.agent = agent
+        self.paneID = paneID
         self.mode = mode
         self.result = result
         self.message = message
