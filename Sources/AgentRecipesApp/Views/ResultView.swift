@@ -97,10 +97,11 @@ private struct RunningView: View {
             VStack(spacing: 4) {
                 Text(run.recipeName)
                     .font(.title3.weight(.semibold))
+                // クロスフェードさせると前後の文字が重なって見えるので、そのまま差し替える。
                 Text(run.stage.displayName)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .animation(.default, value: run.stage)
+                    .id(run.stage)
             }
             // 1 秒ごとに描き直して、止まっていないことが分かるようにする。
             TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
