@@ -364,12 +364,22 @@ private struct ManagerSkillRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            Text(sources.joined(separator: " · "))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            // 置き場所は文字より記号の方が読み取りやすい。
+            HStack(spacing: 5) {
+                ForEach(sources, id: \.self) { source in
+                    if let kind = AgentKind(rawValue: source) {
+                        AgentBrandIcon(kind: kind, active: true, size: 14)
+                            .help(kind.displayName)
+                    } else {
+                        Text(source)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .padding(.vertical, 2)
-        .help("Skill を選ぶと、実行方法と Prompt を設定できます")
+        .help("Skill を選ぶと、実行方法と Prompt を設定できます (\(sources.joined(separator: ", ")))")
     }
 }
 
