@@ -6,12 +6,15 @@ public enum ArgumentType: String, Codable, CaseIterable, Sendable {
     case string
     case multiline
     case url
+    /// 決められた選択肢から選ぶ。値は `ArgumentSpec.options` から取る。
+    case choice
 
     public var displayName: String {
         switch self {
         case .string: return "String"
         case .multiline: return "Multiline"
         case .url: return "URL"
+        case .choice: return "選択"
         }
     }
 
@@ -21,6 +24,22 @@ public enum ArgumentType: String, Codable, CaseIterable, Sendable {
         case .url: return "link"
         case .string: return "text.cursor"
         case .multiline: return "text.alignleft"
+        case .choice: return "list.bullet.circle"
+        }
+    }
+}
+
+/// 選択肢の見せ方。
+public enum ChoiceStyle: String, Codable, CaseIterable, Sendable {
+    /// プルダウン。選択肢が多いときに向く。
+    case menu
+    /// 並べたボタン。2〜4 個くらいのときに向く。
+    case buttons
+
+    public var displayName: String {
+        switch self {
+        case .menu: return "プルダウン"
+        case .buttons: return "ボタン"
         }
     }
 }
@@ -35,8 +54,20 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
     public var defaultValue: String?
     /// 未入力時に clipboard を既定値として使う。
     public var useClipboardAsDefault: Bool
+    /// `type == .choice` のときの選択肢。
+    public var options: [String]
+    /// 選択肢の見せ方 (プルダウン / ボタン)。
+    public var choiceStyle: ChoiceStyle
 
     public var displayLabel: String { label ?? name }
+
+    /// 空白を落とし、重複を除いた選択肢。
+    public var normalizedOptions: [String] {
+        var seen = Set<String>()
+        return options
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
 
     public init(
         id: UUID = UUID(),
@@ -45,7 +76,9 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         type: ArgumentType = .string,
         required: Bool = true,
         defaultValue: String? = nil,
-        useClipboardAsDefault: Bool = false
+        useClipboardAsDefault: Bool = false,
+        options: [String] = [],
+        choiceStyle: ChoiceStyle = .menu
     ) {
         self.id = id
         self.name = name
@@ -54,10 +87,13 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         self.required = required
         self.defaultValue = defaultValue
         self.useClipboardAsDefault = useClipboardAsDefault
+        self.options = options
+        self.choiceStyle = choiceStyle
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, label, type, required, defaultValue, useClipboardAsDefault
+        case options, choiceStyle
     }
 
     public init(from decoder: Decoder) throws {
@@ -70,6 +106,8 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         required = try c.decodeIfPresent(Bool.self, forKey: .required) ?? true
         defaultValue = try c.decodeIfPresent(String.self, forKey: .defaultValue)
         useClipboardAsDefault = try c.decodeIfPresent(Bool.self, forKey: .useClipboardAsDefault) ?? false
+        options = try c.decodeIfPresent([String].self, forKey: .options) ?? []
+        choiceStyle = try c.decodeIfPresent(ChoiceStyle.self, forKey: .choiceStyle) ?? .menu
     }
 }
 

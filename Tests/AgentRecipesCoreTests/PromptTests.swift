@@ -205,6 +205,53 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertFalse(recipe.needsUserInput)
     }
 
+    /// 選択式の引数は、選択肢にある値だけを通す。
+    func testChoiceArgumentAcceptsOnlyItsOptions() throws {
+        let recipe = Recipe(
+            id: "c", name: "C",
+            arguments: [ArgumentSpec(
+                name: "focus", type: .choice, required: true,
+                options: ["全体像", "API", "セキュリティ"], choiceStyle: .buttons
+            )],
+            body: "{{focus}} を見てください"
+        )
+        let builder = PromptBuilder(clipboard: FakeClipboard())
+        XCTAssertEqual(
+            try builder.build(recipe: recipe, userValues: ["focus": "API"], project: nil),
+            "API を見てください"
+        )
+        XCTAssertThrowsError(
+            try builder.build(recipe: recipe, userValues: ["focus": "その他"], project: Project?.none)
+        ) { error in
+            guard case .invalidValue(let name, _)? = error as? ArgumentError else {
+                return XCTFail("invalidValue のはず: \(error)")
+            }
+            XCTAssertEqual(name, "focus")
+        }
+    }
+
+    /// 既定値があれば選ばずに実行できる。
+    func testChoiceArgumentUsesDefaultValue() throws {
+        let recipe = Recipe(
+            id: "c", name: "C",
+            arguments: [ArgumentSpec(
+                name: "focus", type: .choice, required: true,
+                defaultValue: "全体像", options: ["全体像", "API"]
+            )],
+            body: "{{focus}}"
+        )
+        let builder = PromptBuilder(clipboard: FakeClipboard())
+        XCTAssertEqual(try builder.build(recipe: recipe, userValues: [:], project: nil), "全体像")
+    }
+
+    /// 空白や重複を除いた選択肢を使う。
+    func testNormalizedOptionsDropsBlanksAndDuplicates() {
+        let argument = ArgumentSpec(
+            name: "x", type: .choice, options: [" A ", "A", "", "B"]
+        )
+        XCTAssertEqual(argument.normalizedOptions, ["A", "B"])
+    }
+
     func testSearchMatchesNameTagsAndAgent() {
         var recipe = webResearch()
         recipe.tags = ["research", "json"]
@@ -214,8 +261,8 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertFalse(recipe.matches("music"))
     }
 
-    func testArgumentTypesAreLimitedToMVPSet() {
-        XCTAssertEqual(ArgumentType.allCases.map(\.rawValue), ["string", "multiline", "url"])
+    func testArgumentTypesAreTextAndChoice() {
+        XCTAssertEqual(ArgumentType.allCases.map(\.rawValue), ["string", "multiline", "url", "choice"])
     }
 
     func testModesAreCopyPasteSubmit() {

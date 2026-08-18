@@ -235,7 +235,11 @@ Recipe ディレクトリは Settings で差し替え可能（任意ディレク
 
 `{{name}}` のみ。if / loop / function は入れない。
 
-- 引数: Recipe に定義した `{{url}}` など（型は **String / Multiline String / URL** の 3 つ）
+- 引数: Recipe に定義した `{{url}}` など（型は **String / Multiline / URL / 選択** の 4 つ）
+  - **選択**は決められた候補から選ぶ型。`プルダウン` と `ボタン` のどちらで見せるかを選べる。
+    候補にない値はエラーにするので、Skill 側で想定外の入力を扱わずに済む
+  - 選択式の引数がある Recipe は、クリックすると**実行前の確認**に選択肢が出る
+    （プレビューを切っていても、選ぶ必要があるときだけ開く）
 - Built-in 変数: `{{clipboard}} {{date}} {{time}} {{project}} {{cwd}}`
 
 Shell を経由しないため、シェルエスケープの概念自体が無い。

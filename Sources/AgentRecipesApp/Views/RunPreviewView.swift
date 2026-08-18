@@ -20,6 +20,7 @@ struct RunPreviewView: View {
     private func content(_ preview: RunPreview) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             header(preview)
+            choices(preview)
             destination(preview)
             prompt(preview)
 
@@ -39,12 +40,20 @@ struct RunPreviewView: View {
                 Button(preview.mode.displayName) { model.runPreview(preview) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    .disabled(hasUnansweredChoice(preview))
             }
         }
         .padding(16)
         .frame(minWidth: 520, minHeight: 440)
         .onChange(of: model.settings) { _, _ in model.scheduleSettingsSave() }
         .onAppear { model.refreshHerdr() }
+    }
+
+    /// 必須の選択がまだ埋まっていないか。
+    private func hasUnansweredChoice(_ preview: RunPreview) -> Bool {
+        preview.choices.contains { argument in
+            argument.required && (preview.values[argument.name] ?? "").isEmpty
+        }
     }
 
     private func header(_ preview: RunPreview) -> some View {
@@ -61,6 +70,35 @@ struct RunPreviewView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)
+        }
+    }
+
+    /// 選択式の引数。ここで選んだ値がそのまま Prompt に入る。
+    @ViewBuilder
+    private func choices(_ preview: RunPreview) -> some View {
+        if !preview.choices.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(preview.choices) { argument in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Text(argument.displayLabel).font(.caption).bold()
+                            if argument.required {
+                                Text("*").font(.caption).foregroundStyle(.red)
+                            }
+                        }
+                        ChoiceField(
+                            argument: argument,
+                            value: Binding(
+                                get: { model.previewRequest?.values[argument.name] ?? "" },
+                                set: { model.previewRequest?.values[argument.name] = $0 }
+                            )
+                        )
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -136,7 +174,7 @@ struct RunPreviewView: View {
     private func prompt(_ preview: RunPreview) -> some View {
         let text = model.preview(
             recipe: preview.recipe,
-            values: [:],
+            values: preview.values,
             project: preview.project
         )
         return VStack(alignment: .leading, spacing: 4) {

@@ -201,10 +201,22 @@ final class AppModel: ObservableObject {
     }
 
     /// 引数の値が実行時に埋まらない Recipe か (Clipboard も既定値も無い)。
+    /// 選択式の引数は画面で選べるので、ここでは「入力が要る」に数えない。
     func needsTyping(_ recipe: Recipe) -> Bool {
         let values = initialValues(for: recipe)
         return recipe.arguments.contains { argument in
-            argument.required && (values[argument.name] ?? "").isEmpty
+            guard argument.required, (values[argument.name] ?? "").isEmpty else { return false }
+            return !(argument.type == .choice && !argument.normalizedOptions.isEmpty)
+        }
+    }
+
+    /// 実行前に選ばせたい引数があるか。
+    func needsChoice(_ recipe: Recipe) -> Bool {
+        let values = initialValues(for: recipe)
+        return recipe.arguments.contains { argument in
+            argument.type == .choice
+                && !argument.normalizedOptions.isEmpty
+                && (values[argument.name] ?? "").isEmpty
         }
     }
 
@@ -243,8 +255,14 @@ final class AppModel: ObservableObject {
         }
 
         // 送る前に何が送られるかを見せる (Settings で切り替え、Copy は対象外)。
-        if settings.previewBeforeRun, mode.requiresHerdr {
-            previewRequest = RunPreview(recipe: recipe, project: project(for: recipe), mode: mode)
+        // 選択式の引数がある Recipe は、プレビューを切っていてもここで選んでもらう。
+        if mode.requiresHerdr, settings.previewBeforeRun || needsChoice(recipe) {
+            previewRequest = RunPreview(
+                recipe: recipe,
+                project: project(for: recipe),
+                mode: mode,
+                values: initialValues(for: recipe)
+            )
             PanelPresenter.shared.showPreview(model: self)
             return
         }
@@ -257,7 +275,7 @@ final class AppModel: ObservableObject {
         PanelPresenter.shared.closePreview()
         execute(
             recipe: preview.recipe,
-            values: [:],
+            values: preview.values.filter { !$0.value.isEmpty },
             project: preview.project,
             mode: mode ?? preview.mode,
             agent: nil
@@ -652,6 +670,13 @@ struct RunPreview: Identifiable {
     var recipe: Recipe
     var project: Project?
     var mode: ExecutionMode
+    /// 解決済みの引数。選択式の引数はこの画面で選び直せる。
+    var values: [String: String] = [:]
+
+    /// この画面で選ばせる引数 (選択肢を持つもの)。
+    var choices: [ArgumentSpec] {
+        recipe.arguments.filter { $0.type == .choice && !$0.normalizedOptions.isEmpty }
+    }
 }
 
 struct RunResult: Identifiable {

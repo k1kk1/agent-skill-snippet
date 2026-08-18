@@ -277,9 +277,48 @@ struct ArgumentField: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(height: 70)
                     .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
+            case .choice:
+                ChoiceField(argument: argument, value: $value)
             case .string, .url:
                 TextField(argument.displayLabel, text: $value)
             }
+        }
+    }
+}
+
+/// 選択式の入力。プルダウンか、並べたボタンで値を選ぶ。
+struct ChoiceField: View {
+    let argument: ArgumentSpec
+    @Binding var value: String
+
+    var body: some View {
+        let options = argument.normalizedOptions
+        if options.isEmpty {
+            Text("選択肢が設定されていません")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if argument.choiceStyle == .buttons {
+            HStack(spacing: 6) {
+                ForEach(options, id: \.self) { option in
+                    Button {
+                        value = option
+                    } label: {
+                        Text(option).lineLimit(1).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(value == option ? .accentColor : .secondary)
+                }
+            }
+        } else {
+            Picker("", selection: $value) {
+                if !options.contains(value) {
+                    Text(value.isEmpty ? "未選択" : value).tag(value)
+                }
+                ForEach(options, id: \.self) { option in
+                    Text(option).tag(option)
+                }
+            }
+            .labelsHidden()
         }
     }
 }

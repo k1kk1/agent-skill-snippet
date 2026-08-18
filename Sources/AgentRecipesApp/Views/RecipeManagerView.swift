@@ -867,6 +867,7 @@ struct RecipeEditorView: View {
                     HStack {
                         Toggle("必須", isOn: $argument.required)
                         Toggle("Clipboard を既定値に", isOn: $argument.useClipboardAsDefault)
+                            .disabled(argument.type == .choice)
                         LabeledContent("既定値") {
                             TextField("未指定", text: Binding(
                                 get: { argument.defaultValue ?? "" },
@@ -875,6 +876,38 @@ struct RecipeEditorView: View {
                         }
                     }
                     .font(.caption)
+
+                    if argument.type == .choice {
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("選択肢（カンマ区切り）")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                TextField("例: 全体像, API, セキュリティ", text: Binding(
+                                    get: { argument.options.joined(separator: ", ") },
+                                    set: { text in
+                                        argument.options = text
+                                            .split(separator: ",")
+                                            .map { $0.trimmingCharacters(in: .whitespaces) }
+                                            .filter { !$0.isEmpty }
+                                    }
+                                ))
+                            }
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("見せ方")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Picker("", selection: $argument.choiceStyle) {
+                                    ForEach(ChoiceStyle.allCases, id: \.self) { style in
+                                        Text(style.displayName).tag(style)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                            .frame(width: 130)
+                        }
+                        .font(.caption)
+                    }
                 }
                 .padding(8)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))

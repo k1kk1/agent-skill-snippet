@@ -91,7 +91,15 @@ public enum SampleRecipes {
             favorite: true,
             arguments: [
                 ArgumentSpec(name: "url", label: "URL", type: .url, required: true, useClipboardAsDefault: true),
-                ArgumentSpec(name: "focus", label: "確認項目", type: .string, required: false, defaultValue: "全体像"),
+                ArgumentSpec(
+                    name: "focus",
+                    label: "確認項目",
+                    type: .choice,
+                    required: false,
+                    defaultValue: "全体像",
+                    options: ["全体像", "使い方", "API", "セキュリティ"],
+                    choiceStyle: .buttons
+                ),
             ],
             mode: .submit,
             target: TargetSpec(session: .newSession),

@@ -81,6 +81,16 @@ public struct ArgumentResolver: Sendable {
             guard let url = URL(string: value), url.scheme != nil, url.host != nil else {
                 throw ArgumentError.invalidValue(argument: argument.name, reason: "URL として解釈できません")
             }
+        case .choice:
+            let options = argument.normalizedOptions
+            // 選択肢を決めていない Recipe では、値をそのまま通す。
+            guard !options.isEmpty else { break }
+            guard options.contains(value) else {
+                throw ArgumentError.invalidValue(
+                    argument: argument.name,
+                    reason: "選択肢にありません (\(options.joined(separator: " / ")))"
+                )
+            }
         case .string, .multiline:
             break
         }
