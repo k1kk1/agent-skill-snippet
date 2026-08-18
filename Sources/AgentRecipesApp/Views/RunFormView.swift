@@ -287,38 +287,88 @@ struct ArgumentField: View {
 }
 
 /// 選択式の入力。プルダウンか、並べたボタンで値を選ぶ。
+/// 複数選択のときは、選んだ順ではなく選択肢の並び順で連結する。
 struct ChoiceField: View {
     let argument: ArgumentSpec
     @Binding var value: String
 
+    private var options: [String] { argument.normalizedOptions }
+
+    private var selected: Set<String> {
+        Set(argument.allowsMultiple ? ArgumentSpec.selectedValues(value) : (value.isEmpty ? [] : [value]))
+    }
+
     var body: some View {
-        let options = argument.normalizedOptions
         if options.isEmpty {
             Text("選択肢が設定されていません")
                 .font(.caption)
                 .foregroundStyle(.orange)
         } else if argument.choiceStyle == .buttons {
-            HStack(spacing: 6) {
-                ForEach(options, id: \.self) { option in
-                    Button {
-                        value = option
-                    } label: {
-                        Text(option).lineLimit(1).frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(value == option ? .accentColor : .secondary)
-                }
-            }
+            buttons
+        } else if argument.allowsMultiple {
+            multiMenu
         } else {
-            Picker("", selection: $value) {
-                if !options.contains(value) {
-                    Text(value.isEmpty ? "未選択" : value).tag(value)
-                }
-                ForEach(options, id: \.self) { option in
-                    Text(option).tag(option)
-                }
-            }
-            .labelsHidden()
+            singleMenu
         }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 6) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    toggle(option)
+                } label: {
+                    HStack(spacing: 4) {
+                        if argument.allowsMultiple {
+                            Image(systemName: selected.contains(option) ? "checkmark.square.fill" : "square")
+                                .font(.caption2)
+                        }
+                        Text(option).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(selected.contains(option) ? .accentColor : .secondary)
+            }
+        }
+    }
+
+    /// 複数選択のプルダウン。開いたまま複数チェックできる。
+    private var multiMenu: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Toggle(option, isOn: Binding(
+                    get: { selected.contains(option) },
+                    set: { _ in toggle(option) }
+                ))
+            }
+        } label: {
+            Text(value.isEmpty ? "未選択" : value)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton)
+    }
+
+    private var singleMenu: some View {
+        Picker("", selection: $value) {
+            if !options.contains(value) {
+                Text(value.isEmpty ? "未選択" : value).tag(value)
+            }
+            ForEach(options, id: \.self) { option in
+                Text(option).tag(option)
+            }
+        }
+        .labelsHidden()
+    }
+
+    private func toggle(_ option: String) {
+        guard argument.allowsMultiple else {
+            value = option
+            return
+        }
+        var next = selected
+        if next.contains(option) { next.remove(option) } else { next.insert(option) }
+        value = argument.joined(Array(next))
     }
 }

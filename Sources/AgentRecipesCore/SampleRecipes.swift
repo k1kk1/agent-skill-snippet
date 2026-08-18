@@ -98,7 +98,8 @@ public enum SampleRecipes {
                     required: false,
                     defaultValue: "全体像",
                     options: ["全体像", "使い方", "API", "セキュリティ"],
-                    choiceStyle: .buttons
+                    choiceStyle: .buttons,
+                    allowsMultiple: true
                 ),
             ],
             mode: .submit,

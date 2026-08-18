@@ -252,6 +252,44 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertEqual(argument.normalizedOptions, ["A", "B"])
     }
 
+    /// 複数選択は「A, B」の形で渡し、選択肢の並び順に揃える。
+    func testMultipleChoiceJoinsValuesInOptionOrder() throws {
+        let argument = ArgumentSpec(
+            name: "focus", type: .choice, required: true,
+            options: ["全体像", "API", "セキュリティ"], allowsMultiple: true
+        )
+        XCTAssertEqual(argument.joined(["セキュリティ", "全体像"]), "全体像, セキュリティ")
+
+        let recipe = Recipe(id: "m", name: "M", arguments: [argument], body: "{{focus}}")
+        let builder = PromptBuilder(clipboard: FakeClipboard())
+        XCTAssertEqual(
+            try builder.build(recipe: recipe, userValues: ["focus": "全体像, セキュリティ"], project: nil),
+            "全体像, セキュリティ"
+        )
+    }
+
+    /// 複数選択でも、選択肢にない値は弾く。
+    func testMultipleChoiceRejectsUnknownValue() {
+        let recipe = Recipe(
+            id: "m", name: "M",
+            arguments: [ArgumentSpec(
+                name: "focus", type: .choice, required: true,
+                options: ["A", "B"], allowsMultiple: true
+            )],
+            body: "{{focus}}"
+        )
+        XCTAssertThrowsError(
+            try PromptBuilder(clipboard: FakeClipboard())
+                .build(recipe: recipe, userValues: ["focus": "A, C"], project: nil)
+        ) { error in
+            guard case .invalidValue(let name, let reason)? = error as? ArgumentError else {
+                return XCTFail("invalidValue のはず: \(error)")
+            }
+            XCTAssertEqual(name, "focus")
+            XCTAssertTrue(reason.contains("C"))
+        }
+    }
+
     func testSearchMatchesNameTagsAndAgent() {
         var recipe = webResearch()
         recipe.tags = ["research", "json"]

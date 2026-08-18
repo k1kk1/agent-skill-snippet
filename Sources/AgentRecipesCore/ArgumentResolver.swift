@@ -85,10 +85,13 @@ public struct ArgumentResolver: Sendable {
             let options = argument.normalizedOptions
             // 選択肢を決めていない Recipe では、値をそのまま通す。
             guard !options.isEmpty else { break }
-            guard options.contains(value) else {
+            let selected = argument.allowsMultiple ? ArgumentSpec.selectedValues(value) : [value]
+            let unknown = selected.filter { !options.contains($0) }
+            guard unknown.isEmpty else {
                 throw ArgumentError.invalidValue(
                     argument: argument.name,
-                    reason: "選択肢にありません (\(options.joined(separator: " / ")))"
+                    reason: "選択肢にありません: \(unknown.joined(separator: ", "))"
+                        + " (\(options.joined(separator: " / ")))"
                 )
             }
         case .string, .multiline:

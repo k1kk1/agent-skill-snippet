@@ -926,6 +926,13 @@ struct RecipeEditorView: View {
                                 .labelsHidden()
                             }
                             .frame(width: 130)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("選び方")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Toggle("複数選択", isOn: $argument.allowsMultiple)
+                            }
+                            .frame(width: 100)
                         }
                         .font(.caption)
                     }

@@ -58,6 +58,8 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
     public var options: [String]
     /// 選択肢の見せ方 (プルダウン / ボタン)。
     public var choiceStyle: ChoiceStyle
+    /// 複数選べるようにする。値は「A, B」のように連結して渡す。
+    public var allowsMultiple: Bool
 
     public var displayLabel: String { label ?? name }
 
@@ -78,7 +80,8 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         defaultValue: String? = nil,
         useClipboardAsDefault: Bool = false,
         options: [String] = [],
-        choiceStyle: ChoiceStyle = .menu
+        choiceStyle: ChoiceStyle = .menu,
+        allowsMultiple: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -89,11 +92,29 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         self.useClipboardAsDefault = useClipboardAsDefault
         self.options = options
         self.choiceStyle = choiceStyle
+        self.allowsMultiple = allowsMultiple
+    }
+
+    /// 複数選択の値の区切り。Prompt にそのまま出るので読みやすい形にする。
+    public static let choiceSeparator = ", "
+
+    /// 連結された値を選択肢の配列に戻す。
+    public static func selectedValues(_ raw: String) -> [String] {
+        raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// 選択肢の並び順を保ったまま連結する。
+    public func joined(_ values: [String]) -> String {
+        let selected = Set(values)
+        let ordered = normalizedOptions.filter { selected.contains($0) }
+        return ordered.joined(separator: Self.choiceSeparator)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, label, type, required, defaultValue, useClipboardAsDefault
-        case options, choiceStyle
+        case options, choiceStyle, allowsMultiple
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +129,7 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
         useClipboardAsDefault = try c.decodeIfPresent(Bool.self, forKey: .useClipboardAsDefault) ?? false
         options = try c.decodeIfPresent([String].self, forKey: .options) ?? []
         choiceStyle = try c.decodeIfPresent(ChoiceStyle.self, forKey: .choiceStyle) ?? .menu
+        allowsMultiple = try c.decodeIfPresent(Bool.self, forKey: .allowsMultiple) ?? false
     }
 }
 
