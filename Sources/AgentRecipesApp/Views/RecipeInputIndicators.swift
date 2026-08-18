@@ -58,7 +58,7 @@ struct RecipeInputBadges: View {
     /// メニューバーでは種類ごとに常に同じ位置を使う。
     /// 空のスロットも確保することで、Recipe ごとに後続の記号が横に動かない。
     private var compactBadges: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             compactSlot(
                 ArgumentType.string.symbolName,
                 label: ArgumentType.string.displayName,
@@ -95,9 +95,9 @@ struct RecipeInputBadges: View {
     /// 使う = オレンジ / 使えるが今回は使わない = 白 / 対象外 = グレー。
     private func compactSlot(_ symbol: String, label: String, state: CompactState) -> some View {
         Image(systemName: symbol)
-            .font(.caption2.weight(.medium))
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(color(for: state))
-            .frame(width: 11, height: 14)
+            .frame(width: 15, height: 17)
             .help(label)
             .accessibilityHidden(true)
     }

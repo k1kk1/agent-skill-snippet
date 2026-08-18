@@ -313,23 +313,20 @@ struct RecipeRow: View {
         Button {
             action(NSEvent.modifierFlags.contains(.option))
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
+            HStack(spacing: 10) {
                 Text(recipe.name)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 RecipeInputBadges(recipe: recipe, compact: true)
-                    .frame(width: 80, alignment: .trailing)
-                Text(effectiveMode.displayName)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 58, alignment: .trailing)
+                // クリックで何が起きるかは、文字ではなくアイコンで示す。
+                Image(systemName: icon)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+            .padding(.vertical, 5)
             .background(hovering ? Color.accentColor.opacity(0.15) : .clear)
         }
         .buttonStyle(.plain)
