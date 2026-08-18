@@ -8,7 +8,6 @@ import ServiceManagement
 let delegate = AppDelegate()
 let app = NSApplication.shared
 app.delegate = delegate
-app.setActivationPolicy(.accessory)
 app.run()
 
 @MainActor
@@ -25,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let model = AppModel()
         self.model = model
+        applyActivationPolicy(showInDock: model.settings.showInDock)
         installMainMenu()
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -75,12 +75,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Dock から起動したときは、まず Recipe 一覧を開く。
+        // (メニューバー常駐だけの設定なら、アイコンからの操作に任せる)
+        if model.settings.showInDock {
+            DispatchQueue.main.async {
+                PanelPresenter.shared.showManager(model: model)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+
         // メニューバーが埋まっていると、アイコンがノッチの下に置かれて見えなくなる。
         // 黙って「起動していない」ように見えてしまうので、検出して知らせる。
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.warnIfStatusItemIsHidden()
         }
         observeStatusItemVisibility()
+    }
+
+    /// Dock のアイコンをクリックしたとき (ウィンドウが無い状態) に一覧を開く。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard !hasVisibleWindows, let model else { return true }
+        PanelPresenter.shared.showManager(model: model)
+        return true
+    }
+
+    /// Dock に出すかどうか。設定を変えたその場で切り替える。
+    func applyActivationPolicy(showInDock: Bool) {
+        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
     }
 
     /// 起動後にメニューバーが埋まってアイコンが押し出されることもあるので、

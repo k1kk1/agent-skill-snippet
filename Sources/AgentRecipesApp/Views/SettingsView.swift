@@ -48,6 +48,7 @@ private struct GeneralSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Toggle("Dock に表示する", isOn: $model.settings.showInDock)
             Toggle("ログイン時に起動する", isOn: $model.settings.launchAtLogin)
             Toggle("送信結果を通知する", isOn: $model.settings.notificationsEnabled)
             Toggle("実行前にプレビューを表示する", isOn: $model.settings.previewBeforeRun)

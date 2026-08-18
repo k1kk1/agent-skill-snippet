@@ -57,6 +57,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var defaultWorkingDirectory: String
     /// 送信前に、実際に送る Prompt と送信先をプレビューする。
     public var previewBeforeRun: Bool
+    /// Dock にアイコンを出し、通常のアプリとして扱う。
+    /// OFF にするとメニューバー常駐だけになる。
+    public var showInDock: Bool
     /// メニューに MCP の接続状況を出す。
     public var showMCPInMenu: Bool
     /// MCP 一覧でアイコンを出さない LLM。使っていない LLM を隠せる。
@@ -102,6 +105,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         editorCommand: String = "code",
         defaultWorkingDirectory: String = "",
         previewBeforeRun: Bool = true,
+        showInDock: Bool = true,
         showMCPInMenu: Bool = true,
         mcpHiddenAgents: [AgentKind] = []
     ) {
@@ -120,6 +124,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.editorCommand = editorCommand
         self.defaultWorkingDirectory = defaultWorkingDirectory
         self.previewBeforeRun = previewBeforeRun
+        self.showInDock = showInDock
         self.showMCPInMenu = showMCPInMenu
         self.mcpHiddenAgents = mcpHiddenAgents
     }
@@ -133,7 +138,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case schemaVersion, launchAtLogin, notificationsEnabled, herdrExecutablePath
         case recipesDirectory, debugLogging, historyLimit, defaultMode, skillSources, editorCommand
         case waitForResult, resultTimeoutSeconds, agent, defaultWorkingDirectory, previewBeforeRun
-        case showMCPInMenu, mcpHiddenAgents
+        case showMCPInMenu, mcpHiddenAgents, showInDock
     }
 
     public init(from decoder: Decoder) throws {
@@ -154,6 +159,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         editorCommand = try c.decodeIfPresent(String.self, forKey: .editorCommand) ?? d.editorCommand
         defaultWorkingDirectory = try c.decodeIfPresent(String.self, forKey: .defaultWorkingDirectory) ?? d.defaultWorkingDirectory
         previewBeforeRun = try c.decodeIfPresent(Bool.self, forKey: .previewBeforeRun) ?? d.previewBeforeRun
+        showInDock = try c.decodeIfPresent(Bool.self, forKey: .showInDock) ?? d.showInDock
         showMCPInMenu = try c.decodeIfPresent(Bool.self, forKey: .showMCPInMenu) ?? d.showMCPInMenu
         mcpHiddenAgents = try c.decodeIfPresent([AgentKind].self, forKey: .mcpHiddenAgents) ?? d.mcpHiddenAgents
     }

@@ -573,6 +573,10 @@ final class AppModel: ObservableObject {
         if previous.herdrExecutablePath != settings.herdrExecutablePath {
             refreshHerdr()
         }
+        if previous.showInDock != settings.showInDock {
+            // Dock の表示は起動しなおさなくても切り替わる。
+            (NSApp.delegate as? AppDelegate)?.applyActivationPolicy(showInDock: settings.showInDock)
+        }
         appliedSettings = settings
     }
 

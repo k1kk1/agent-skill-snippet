@@ -20,9 +20,9 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
-	<!-- メニューバー常駐アプリなので Dock / ⌘Tab には出さない -->
+	<!-- Dock に出すかは Settings で切り替える (起動時に activation policy を適用)。 -->
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 </dict>
