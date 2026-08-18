@@ -10,77 +10,101 @@ struct ResultView: View {
     @State private var reply: String = ""
 
     var body: some View {
-        if let run = model.activeRun {
-            RunningView(run: run)
-        } else if let result = model.result {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(result.recipeName).font(.title3).bold()
-                        Text(result.agent.displayName).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if model.isAnswering { ProgressView().controlSize(.small) }
-                    if let status = result.agent.status {
-                        Text(status)
-                            .font(.caption2)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.15), in: Capsule())
-                    }
-                }
-
-                if result.pendingPrompt != nil {
-                    Label(
-                        "起動時の確認で止まっているため、Prompt はまだ送っていません。答えると送信します。",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-
-                if let question = result.question {
-                    QuestionPromptView(
-                        question: question,
-                        reply: $reply,
-                        disabled: model.isAnswering,
-                        onSelect: { model.answer($0, for: result) },
-                        onReply: {
-                            model.answer(text: reply, for: result)
-                            reply = ""
-                        }
-                    )
-                }
-
-                ScrollView([.horizontal, .vertical]) {
-                    ResultContentView(presentation: result.presentation)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-
-                HStack {
-                    Button("Herdr で開く") { model.focusInHerdr(result.agent) }
-                    Button("コピー") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(result.output, forType: .string)
-                    }
-                    Button("最新を読む", systemImage: "arrow.clockwise") { model.refreshResult() }
-                        .disabled(model.isAnswering)
-                    Spacer()
-                    Label(
-                        result.isRich ? "Skill の構造化結果" : "Agent の画面出力",
-                        systemImage: result.isRich ? "rectangle.3.group" : "terminal"
-                    )
-                    .font(.caption2).foregroundStyle(.secondary)
-                }
+        Group {
+            if let run = model.activeRun {
+                RunningView(run: run)
+            } else if let result = model.result {
+                content(result)
+            } else {
+                ContentUnavailableView(
+                    "結果がありません",
+                    systemImage: "tray",
+                    description: Text("Recipe を実行すると、ここに Agent の応答が出ます。")
+                )
             }
-            .padding(16)
-        } else {
-            Text("結果がありません")
+        }
+    }
+
+    private func content(_ result: RunResult) -> some View {
+        VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
+            header(result)
+
+            if result.pendingPrompt != nil {
+                Label(
+                    "起動時の確認で止まっているため、Prompt はまだ送っていません。答えると送信します。",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
+            }
+
+            if let question = result.question {
+                QuestionPromptView(
+                    question: question,
+                    reply: $reply,
+                    disabled: model.isAnswering,
+                    onSelect: { model.answer($0, for: result) },
+                    onReply: {
+                        model.answer(text: reply, for: result)
+                        reply = ""
+                    }
+                )
+            }
+
+            ScrollView([.horizontal, .vertical]) {
+                ResultContentView(presentation: result.presentation)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
+
+            ActionBar {
+                Label(
+                    result.isRich ? "Skill の構造化結果" : "Agent の画面出力",
+                    systemImage: result.isRich ? "rectangle.3.group" : "terminal"
+                )
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } trailing: {
+                Button {
+                    model.focusInHerdr(result.agent)
+                } label: {
+                    Label("Herdr で開く", systemImage: "arrow.up.forward.app")
+                }
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(result.output, forType: .string)
+                } label: {
+                    Label("コピー", systemImage: "doc.on.doc")
+                }
+                Button {
+                    model.refreshResult()
+                } label: {
+                    Label("最新を読む", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.isAnswering)
+            }
+        }
+        .windowPadding()
+    }
+
+    private func header(_ result: RunResult) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Metrics.labelSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(result.recipeName).font(.title3.weight(.semibold))
+                Text(result.agent.displayName).font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if model.isAnswering { ProgressView().controlSize(.small) }
+            if let status = result.agent.status {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.15), in: Capsule())
+            }
         }
     }
 }
@@ -90,7 +114,7 @@ private struct RunningView: View {
     let run: ActiveRun
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: Metrics.sectionSpacing) {
             Spacer()
             ProgressView()
                 .controlSize(.large)
@@ -116,7 +140,7 @@ private struct RunningView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
+        .windowPadding()
     }
 
     private func elapsed(to now: Date) -> String {
@@ -134,10 +158,16 @@ private struct QuestionPromptView: View {
     let onReply: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        GroupBox {
+            content
+        } label: {
             Label("Agent が確認を求めています", systemImage: "questionmark.bubble")
-                .font(.caption.weight(.semibold))
                 .foregroundStyle(.orange)
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
             Text(question.prompt)
                 .font(.callout)
                 .textSelection(.enabled)
@@ -156,7 +186,7 @@ private struct QuestionPromptView: View {
                 }
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: Metrics.itemSpacing) {
                 TextField("自由に返信して送る（Enter）", text: $reply)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(onReply)
@@ -165,13 +195,8 @@ private struct QuestionPromptView: View {
                     .disabled(disabled || reply.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.orange.opacity(0.4))
-        )
+        .padding(.top, 2)
     }
 }
 

@@ -11,23 +11,24 @@ struct RunPreviewView: View {
         if let preview = model.previewRequest {
             content(preview)
         } else {
-            Text("プレビューする Recipe がありません")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ContentUnavailableView(
+                "プレビューする Recipe がありません",
+                systemImage: "eye.slash"
+            )
         }
     }
 
     private func content(_ preview: RunPreview) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
             header(preview)
             choices(preview)
             destination(preview)
             prompt(preview)
 
-            HStack {
+            ActionBar {
                 if preview.isPreviewOnly {
                     Label("プレビュー。実行はしません", systemImage: "eye")
-                        .font(.caption)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
                     Toggle("次回から確認しない", isOn: Binding(
@@ -35,12 +36,10 @@ struct RunPreviewView: View {
                         set: { model.settings.previewBeforeRun = !$0 }
                     ))
                     .toggleStyle(.checkbox)
-                    .font(.caption)
                 }
-                Spacer()
+            } trailing: {
                 if preview.isPreviewOnly {
                     Button("閉じる") { model.cancelPreview() }
-                        .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 } else {
                     Button("キャンセル") { model.cancelPreview() }
@@ -54,9 +53,10 @@ struct RunPreviewView: View {
                         .disabled(hasUnansweredChoice(preview))
                 }
             }
+            .controlSize(.large)
         }
-        .padding(16)
-        .frame(minWidth: 520, minHeight: 440)
+        .windowPadding()
+        .frame(minWidth: 520, minHeight: 460)
         .onChange(of: model.settings) { _, _ in model.scheduleSettingsSave() }
         .onAppear { model.refreshHerdr() }
     }
@@ -69,8 +69,8 @@ struct RunPreviewView: View {
     }
 
     private func header(_ preview: RunPreview) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .top, spacing: Metrics.labelSpacing) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(preview.recipe.name).font(.title3.weight(.semibold))
                 if let description = preview.recipe.description, !description.isEmpty {
                     Text(description).font(.callout).foregroundStyle(.secondary)
@@ -79,9 +79,9 @@ struct RunPreviewView: View {
             Spacer()
             if preview.isPreviewOnly {
                 Text("プレビュー")
-                    .font(.caption2.weight(.medium))
+                    .font(.caption)
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Color.accentColor.opacity(0.2), in: Capsule())
+                    .background(Color.accentColor.opacity(0.18), in: Capsule())
             }
             // ボタンと紛らわしくならないよう、モードは控えめなラベルで出す。
             Label(preview.mode.displayName, systemImage: preview.mode.editorIcon)
@@ -95,15 +95,9 @@ struct RunPreviewView: View {
     @ViewBuilder
     private func choices(_ preview: RunPreview) -> some View {
         if !preview.choices.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
+            SectionBox(title: "入力", systemImage: "slider.horizontal.3") {
                 ForEach(preview.choices) { argument in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Text(argument.displayLabel).font(.caption).bold()
-                            if argument.required {
-                                Text("*").font(.caption).foregroundStyle(.red)
-                            }
-                        }
+                    LabeledContent {
                         ChoiceField(
                             argument: argument,
                             value: Binding(
@@ -111,12 +105,16 @@ struct RunPreviewView: View {
                                 set: { model.previewRequest?.values[argument.name] = $0 }
                             )
                         )
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text(argument.displayLabel)
+                            if argument.required {
+                                Text("*").foregroundStyle(.red)
+                            }
+                        }
                     }
                 }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -124,29 +122,21 @@ struct RunPreviewView: View {
     private func destination(_ preview: RunPreview) -> some View {
         let agent = model.settings.agent
         let cwd = preview.project?.path ?? model.settings.expandedDefaultWorkingDirectory
-        return VStack(alignment: .leading, spacing: 6) {
-            row("送信先", systemImage: "paperplane") {
+        return SectionBox(title: "送信先", systemImage: "paperplane") {
+            LabeledContent("Agent") {
                 HStack(spacing: 6) {
                     AgentBrandIcon(kind: agent, active: true, size: 15)
                     Text(sessionText(preview, agent: agent))
                 }
             }
-            row("作業フォルダ", systemImage: "folder") {
+            LabeledContent("作業フォルダ") {
                 Text(cwd).lineLimit(1).truncationMode(.head)
             }
             if let skill = preview.recipe.skill {
-                row("Skill", systemImage: "sparkles") {
-                    Text(skill.displayName)
-                }
+                LabeledContent("Skill") { Text(skill.displayName) }
             }
-            row("結果", systemImage: "rectangle.3.group") {
-                Text(resultText(preview))
-            }
+            LabeledContent("結果") { Text(resultText(preview)) }
         }
-        .font(.callout)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func sessionText(_ preview: RunPreview, agent: AgentKind) -> String {
@@ -174,35 +164,17 @@ struct RunPreviewView: View {
         return "応答を最大 \(model.settings.resultTimeoutSeconds) 秒待って表示（\(format)）"
     }
 
-    private func row(
-        _ title: String,
-        systemImage: String,
-        @ViewBuilder value: () -> some View
-    ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Label(title, systemImage: systemImage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .leading)
-            value()
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
     private func prompt(_ preview: RunPreview) -> some View {
         let text = model.preview(
             recipe: preview.recipe,
             values: preview.values,
             project: preview.project
         )
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("送信する Prompt").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if preview.recipe.arguments.contains(where: \.useClipboardAsDefault) {
-                    Label("クリップボードの内容を含みます", systemImage: "doc.on.clipboard")
-                        .font(.caption2).foregroundStyle(.purple)
-                }
+        return SectionBox(title: "送信する Prompt", systemImage: "text.alignleft") {
+            if preview.recipe.arguments.contains(where: \.useClipboardAsDefault) {
+                Label("クリップボードの内容を含みます", systemImage: "doc.on.clipboard")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             ScrollView {
                 Text(text)

@@ -19,9 +19,10 @@ struct RunFormView: View {
             if let recipe {
                 content(recipe)
             } else {
-                Text("Recipe が選択されていません")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView(
+                    "Recipe が選択されていません",
+                    systemImage: "list.bullet.rectangle"
+                )
             }
         }
         .onChange(of: model.runRequest?.id) { _, _ in loadIfNeeded() }
@@ -33,9 +34,9 @@ struct RunFormView: View {
     }
 
     private func content(_ recipe: Recipe) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
+            HStack(alignment: .top, spacing: Metrics.labelSpacing) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(recipe.name).font(.title3.weight(.semibold))
                     if let description = recipe.description {
                         Text(description).font(.callout).foregroundStyle(.secondary)
@@ -43,19 +44,14 @@ struct RunFormView: View {
                 }
                 Spacer()
                 Label(recipe.mode.displayName, systemImage: modeIcon(recipe.mode))
-                    .font(.caption.weight(.medium))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.12), in: Capsule())
             }
 
             RecipeInputBadges(recipe: recipe)
 
             if !recipe.arguments.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("入力")
-                        .font(.headline)
+                SectionBox(title: "入力", systemImage: "slider.horizontal.3") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(recipe.arguments) { argument in
@@ -81,8 +77,7 @@ struct RunFormView: View {
             }
 
             if recipe.acceptsAdditionalPrompt {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("補足プロンプト（任意）").font(.headline)
+                SectionBox(title: "補足プロンプト（任意）", systemImage: "text.badge.plus") {
                     Text("Skill が許可する範囲の追加条件・背景情報を渡せます。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -103,8 +98,8 @@ struct RunFormView: View {
             Spacer(minLength: 0)
             buttons(recipe)
         }
-        .padding(16)
-        .frame(minWidth: 460, minHeight: 440)
+        .windowPadding()
+        .frame(minWidth: 480, minHeight: 460)
     }
 
     private var projectPicker: some View {
@@ -159,8 +154,7 @@ struct RunFormView: View {
     }
 
     private func preview(_ recipe: Recipe) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Prompt Preview").font(.caption).foregroundStyle(.secondary)
+        SectionBox(title: "送信する Prompt", systemImage: "text.alignleft") {
             ScrollView {
                 Text(model.preview(
                     recipe: recipe,
@@ -179,31 +173,28 @@ struct RunFormView: View {
         }
     }
 
+    /// 主アクションは Recipe の既定モード。残りは副次アクションとして左に置く。
     private func buttons(_ recipe: Recipe) -> some View {
-        HStack {
+        ActionBar {
             if let project = selectedProject {
                 Label(project.path, systemImage: "folder")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
-            Button { run(recipe, mode: .copy) } label: {
-                Label("コピー", systemImage: "doc.on.doc")
+        } trailing: {
+            ForEach(ExecutionMode.allCases.filter { $0 != recipe.mode }, id: \.self) { mode in
+                Button { run(recipe, mode: mode) } label: {
+                    Label(mode.displayName, systemImage: modeIcon(mode))
+                }
+                .disabled(mode.requiresHerdr && !canSendToHerdr(recipe))
             }
-            .buttonStyle(.bordered)
-            .tint(recipe.mode == .copy ? .accentColor : .secondary)
-            Button { run(recipe, mode: .paste) } label: {
-                Label("入力", systemImage: "text.cursor")
+            Button { run(recipe, mode: recipe.mode) } label: {
+                Label(recipe.mode.displayName, systemImage: modeIcon(recipe.mode))
             }
-            .buttonStyle(.bordered)
-            .tint(recipe.mode == .paste ? .accentColor : .secondary)
-                .disabled(!canSendToHerdr(recipe))
-            Button { run(recipe, mode: .submit) } label: {
-                Label("実行", systemImage: "paperplane.fill")
-            }
-            .buttonStyle(.bordered)
-            .tint(recipe.mode == .submit ? .accentColor : .secondary)
-                .disabled(!canSendToHerdr(recipe))
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(recipe.mode.requiresHerdr && !canSendToHerdr(recipe))
         }
+        .controlSize(.large)
     }
 
     private func modeIcon(_ mode: ExecutionMode) -> String {

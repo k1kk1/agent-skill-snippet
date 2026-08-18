@@ -122,7 +122,7 @@ private struct HerdrSettings: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
             Form {
                 LabeledContent("herdr のパス") {
                     HStack {
@@ -207,18 +207,15 @@ private struct MCPSettings: View {
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     ForEach(groups) { group in
-                        MCPGroupRow(group: group, agents: model.settings.mcpVisibleAgents)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                Color.secondary.opacity(0.07),
-                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            )
+                        GroupBox {
+                            MCPGroupRow(group: group, agents: model.settings.mcpVisibleAgents)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
             }
         }
-        .padding(16)
+        .windowPadding()
         // 古い結果なら開いたときに取り直す (10 分以内はそのまま使う)。
         .onAppear { model.refreshMCP() }
     }

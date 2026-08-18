@@ -193,21 +193,15 @@ struct RecipeManagerView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: model.skills.isEmpty ? "sparkles" : "sidebar.left")
-                .font(.system(size: 34))
-                .foregroundStyle(.secondary)
-            Text(model.skills.isEmpty ? "Agent Skill が見つかりません" : "Skill を選択してください")
-                .font(.title3.weight(.semibold))
-            Text(model.skills.isEmpty
-                 ? "~/.claude/skills などに SKILL.md を置くと、ここに並びます。"
-                 : "左の一覧から選ぶと、実行方法と Prompt を編集できます。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView(
+            model.skills.isEmpty ? "Agent Skill が見つかりません" : "Skill を選択してください",
+            systemImage: model.skills.isEmpty ? "sparkles" : "sidebar.left",
+            description: Text(
+                model.skills.isEmpty
+                    ? "~/.claude/skills などに SKILL.md を置くと、ここに並びます。"
+                    : "左の一覧から選ぶと、実行方法と Prompt を編集できます。"
+            )
+        )
     }
 
     private func selectInitialRecipeIfNeeded() {
@@ -389,14 +383,9 @@ private struct EditorSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.headline)
-                .foregroundStyle(.primary)
+        SectionBox(title: title, systemImage: icon) {
             content()
         }
-        .padding(16)
-        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -416,7 +405,7 @@ struct RecipeEditorView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
                 editorHeader
                 EditorSection(title: "基本情報", icon: "slider.horizontal.3") {
                     basics
@@ -433,8 +422,8 @@ struct RecipeEditorView: View {
             }
             .frame(maxWidth: 780, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
+            .padding(.horizontal, Metrics.windowPadding + 4)
+            .padding(.vertical, Metrics.windowPadding)
         }
         .onAppear { tagText = recipe.tags.joined(separator: ", ") }
         .onChange(of: recipe.id) { _, _ in tagText = recipe.tags.joined(separator: ", ") }
@@ -536,9 +525,7 @@ struct RecipeEditorView: View {
     }
 
     private func basicRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(title)
-                .frame(width: 92, alignment: .trailing)
+        LabeledContent(title) {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -779,9 +766,7 @@ struct RecipeEditorView: View {
     }
 
     private func targetRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text(title)
-                .frame(width: 132, alignment: .trailing)
+        LabeledContent(title) {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

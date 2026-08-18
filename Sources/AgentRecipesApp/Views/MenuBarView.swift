@@ -16,20 +16,20 @@ struct MenuBarView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: Metrics.labelSpacing) {
                     if model.filtered.isEmpty {
                         emptyState
                     } else if !model.searchText.isEmpty {
                         section("Results", model.filtered)
                     } else {
-                        if !model.favorites.isEmpty { section("★ Favorites", model.favorites) }
+                        if !model.favorites.isEmpty { section("Favorites", model.favorites) }
                         if !model.recents.isEmpty { section("Recent", model.recents) }
                         projectsSection
                         categoriesSection
                         if !model.uncategorized.isEmpty { section("Other", model.uncategorized) }
                     }
                 }
-                .padding(.vertical, 10)
+                .padding(.vertical, Metrics.itemSpacing)
             }
             .frame(maxHeight: 400)
 
@@ -274,9 +274,10 @@ struct MenuBarView: View {
         }
     }
 
+    /// セクション見出し。macOS のサイドバー見出しに合わせて小さめ・控えめにする。
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
-            .font(.caption).bold()
+            .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.bottom, 2)
