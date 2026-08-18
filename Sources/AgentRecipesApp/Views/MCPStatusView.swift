@@ -110,6 +110,8 @@ struct AgentBrandIcon: View {
 /// 使える LLM だけカラー、それ以外はグレー。
 struct MCPGroupRow: View {
     let group: MCPServerGroup
+    /// アイコンを出す LLM。設定で隠したものは渡さない。
+    var agents: [AgentKind] = AgentKind.allCases
     var compact: Bool = false
 
     var body: some View {
@@ -124,7 +126,7 @@ struct MCPGroupRow: View {
             }
             Spacer(minLength: 6)
             HStack(spacing: compact ? 5 : 7) {
-                ForEach(AgentKind.allCases, id: \.self) { kind in
+                ForEach(agents, id: \.self) { kind in
                     let state = group.state(for: kind)
                     AgentBrandIcon(
                         kind: kind,

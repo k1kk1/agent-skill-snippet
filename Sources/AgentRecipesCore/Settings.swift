@@ -57,6 +57,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var defaultWorkingDirectory: String
     /// 送信前に、実際に送る Prompt と送信先をプレビューする。
     public var previewBeforeRun: Bool
+    /// メニューに MCP の接続状況を出す。
+    public var showMCPInMenu: Bool
+    /// MCP 一覧でアイコンを出さない LLM。使っていない LLM を隠せる。
+    public var mcpHiddenAgents: [AgentKind]
 
     /// 未設定のときに使う作業ディレクトリ。
     /// ホーム直下や Application Support（Recipe / 設定の保存先）を Agent の cwd にすると、
@@ -97,7 +101,9 @@ public struct AppSettings: Codable, Hashable, Sendable {
         skillSources: [SkillSource] = SkillSource.defaults,
         editorCommand: String = "code",
         defaultWorkingDirectory: String = "",
-        previewBeforeRun: Bool = true
+        previewBeforeRun: Bool = true,
+        showMCPInMenu: Bool = true,
+        mcpHiddenAgents: [AgentKind] = []
     ) {
         self.schemaVersion = schemaVersion
         self.launchAtLogin = launchAtLogin
@@ -114,12 +120,20 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.editorCommand = editorCommand
         self.defaultWorkingDirectory = defaultWorkingDirectory
         self.previewBeforeRun = previewBeforeRun
+        self.showMCPInMenu = showMCPInMenu
+        self.mcpHiddenAgents = mcpHiddenAgents
+    }
+
+    /// MCP 一覧に出す LLM。
+    public var mcpVisibleAgents: [AgentKind] {
+        AgentKind.allCases.filter { !mcpHiddenAgents.contains($0) }
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, launchAtLogin, notificationsEnabled, herdrExecutablePath
         case recipesDirectory, debugLogging, historyLimit, defaultMode, skillSources, editorCommand
         case waitForResult, resultTimeoutSeconds, agent, defaultWorkingDirectory, previewBeforeRun
+        case showMCPInMenu, mcpHiddenAgents
     }
 
     public init(from decoder: Decoder) throws {
@@ -140,6 +154,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         editorCommand = try c.decodeIfPresent(String.self, forKey: .editorCommand) ?? d.editorCommand
         defaultWorkingDirectory = try c.decodeIfPresent(String.self, forKey: .defaultWorkingDirectory) ?? d.defaultWorkingDirectory
         previewBeforeRun = try c.decodeIfPresent(Bool.self, forKey: .previewBeforeRun) ?? d.previewBeforeRun
+        showMCPInMenu = try c.decodeIfPresent(Bool.self, forKey: .showMCPInMenu) ?? d.showMCPInMenu
+        mcpHiddenAgents = try c.decodeIfPresent([AgentKind].self, forKey: .mcpHiddenAgents) ?? d.mcpHiddenAgents
     }
 }
 

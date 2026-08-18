@@ -7,6 +7,8 @@ struct MenuBarView: View {
     @ObservedObject var model: AppModel
     let dismiss: () -> Void
     @FocusState private var searchFocused: Bool
+    /// 展開している Projects / Categories。
+    @State private var expandedGroups: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -94,18 +96,12 @@ struct MenuBarView: View {
             VStack(alignment: .leading, spacing: 2) {
                 sectionTitle("Projects")
                 ForEach(projects) { project in
-                    Menu {
-                        ForEach(model.recipes(forProject: project)) { recipe in
-                            Button(recipe.name) {
-                                dismiss()
-                                model.activate(recipe)
-                            }
-                        }
-                    } label: {
-                        Label(project.name, systemImage: "folder")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .padding(.horizontal, 12)
+                    expandableGroup(
+                        id: "project:" + project.id,
+                        title: project.name,
+                        systemImage: "folder",
+                        recipes: model.recipes(forProject: project)
+                    )
                 }
             }
         }
@@ -117,18 +113,46 @@ struct MenuBarView: View {
             VStack(alignment: .leading, spacing: 2) {
                 sectionTitle("Categories")
                 ForEach(model.categories, id: \.self) { category in
-                    Menu {
-                        ForEach(model.recipes(inCategory: category)) { recipe in
-                            Button(recipe.name) {
-                                dismiss()
-                                model.activate(recipe)
-                            }
-                        }
-                    } label: {
-                        Label(category, systemImage: "square.grid.2x2")
+                    expandableGroup(
+                        id: "category:" + category,
+                        title: category,
+                        systemImage: "square.grid.2x2",
+                        recipes: model.recipes(inCategory: category)
+                    )
+                }
+            }
+        }
+    }
+
+    /// その場で開く折りたたみ。ポップアップメニューだと、狙っていない項目を
+    /// クリックしやすく、Recent などの一覧とも操作感が変わってしまう。
+    @ViewBuilder
+    private func expandableGroup(
+        id: String,
+        title: String,
+        systemImage: String,
+        recipes: [Recipe]
+    ) -> some View {
+        let isExpanded = expandedGroups.contains(id)
+        VStack(alignment: .leading, spacing: 2) {
+            MenuRowButton(
+                title: title,
+                systemImage: systemImage,
+                accessory: "\(recipes.count)",
+                chevron: isExpanded ? "chevron.down" : "chevron.right"
+            ) {
+                if isExpanded {
+                    expandedGroups.remove(id)
+                } else {
+                    expandedGroups.insert(id)
+                }
+            }
+            if isExpanded {
+                ForEach(recipes) { recipe in
+                    RecipeRow(recipe: recipe, effectiveMode: model.effectiveMode(recipe)) { forceForm in
+                        dismiss()
+                        model.activate(recipe, forceForm: forceForm)
                     }
-                    .menuStyle(.borderlessButton)
-                    .padding(.horizontal, 12)
                 }
             }
         }
@@ -155,8 +179,8 @@ struct MenuBarView: View {
     /// 行は MCP ごと。使える LLM のアイコンだけカラーになる。
     @ViewBuilder
     private var mcpStatus: some View {
-        let groups = MCPInspection.grouped(AgentKind.allCases.compactMap { model.mcp[$0] })
-        if !groups.isEmpty || !model.mcpChecking.isEmpty {
+        let groups = model.mcpGroups
+        if model.settings.showMCPInMenu, !groups.isEmpty || !model.mcpChecking.isEmpty {
             Button {
                 dismiss()
                 PanelPresenter.shared.showSettings(model: model, tab: .mcp)
@@ -168,14 +192,29 @@ struct MenuBarView: View {
                             ProgressView().controlSize(.small)
                         }
                         Spacer(minLength: 0)
+                        if groups.count > Self.visibleMCPRows {
+                            Text("\(groups.count) 件")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
                         if model.currentMCPFailures.isEmpty == false {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.caption2).foregroundStyle(.orange)
                         }
                     }
-                    ForEach(groups) { group in
-                        MCPGroupRow(group: group, compact: true)
+                    // 件数が多いとメニューが伸び続けるので、5 行までにして残りはスクロール。
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(groups) { group in
+                                MCPGroupRow(
+                                    group: group,
+                                    agents: model.settings.mcpVisibleAgents,
+                                    compact: true
+                                )
+                            }
+                        }
                     }
+                    .frame(maxHeight: Self.mcpListMaxHeight(rows: groups.count))
+                    .scrollDisabled(groups.count <= Self.visibleMCPRows)
                 }
                 .contentShape(Rectangle())
                 .padding(.horizontal, 12)
@@ -183,6 +222,14 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .help("Settings の MCP タブを開く")
         }
+    }
+
+    /// スクロールせずに出す最大行数。
+    private static let visibleMCPRows = 5
+    private static let mcpRowHeight: CGFloat = 19
+
+    private static func mcpListMaxHeight(rows: Int) -> CGFloat {
+        CGFloat(min(rows, visibleMCPRows)) * mcpRowHeight
     }
 
     private var statusLine: some View {
@@ -291,15 +338,37 @@ struct RecipeRow: View {
 
 struct MenuRowButton: View {
     let title: String
+    /// 見出しに付けるアイコン (Projects / Categories 用)。
+    var systemImage: String?
+    /// 右端に出す補足 (件数など)。
+    var accessory: String?
+    /// 開閉を示す記号。折りたたみの見出しにだけ付ける。
+    var chevron: String?
     let action: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack {
+            HStack(spacing: 6) {
+                if let chevron {
+                    Image(systemName: chevron)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                }
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text(title)
-                Spacer()
+                Spacer(minLength: 4)
+                if let accessory {
+                    Text(accessory)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)

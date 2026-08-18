@@ -105,7 +105,8 @@ final class AppModel: ObservableObject {
     ///   - agent: nil ならすべての LLM。
     ///   - force: 直近の結果があっても調べ直す (再チェックボタン用)。
     func refreshMCP(agent: AgentKind? = nil, force: Bool = false) {
-        let targets = (agent.map { [$0] } ?? AgentKind.allCases).filter { kind in
+        // 隠している LLM は CLI も叩かない (health check は数秒かかるため)。
+        let targets = (agent.map { [$0] } ?? settings.mcpVisibleAgents).filter { kind in
             guard !force, let checkedAt = mcp[kind]?.checkedAt else { return true }
             return Date().timeIntervalSince(checkedAt) > Self.mcpFreshness
         }
@@ -126,6 +127,11 @@ final class AppModel: ObservableObject {
 
     /// 現在の LLM で接続に失敗している MCP サーバー。
     var currentMCPFailures: [MCPServer] { mcp[settings.agent]?.failures ?? [] }
+
+    /// 表示対象の LLM だけをまとめた MCP 一覧。
+    var mcpGroups: [MCPServerGroup] {
+        MCPInspection.grouped(settings.mcpVisibleAgents.compactMap { mcp[$0] })
+    }
 
     /// SKILL.md をエディタで開く。設定のコマンドで開けなければ OS の既定アプリに任せる。
     func openSkillFile(_ skill: DiscoveredSkill) {

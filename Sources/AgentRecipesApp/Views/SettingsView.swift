@@ -178,9 +178,7 @@ private struct HerdrSettings: View {
 private struct MCPSettings: View {
     @ObservedObject var model: AppModel
 
-    private var groups: [MCPServerGroup] {
-        MCPInspection.grouped(AgentKind.allCases.compactMap { model.mcp[$0] })
-    }
+    private var groups: [MCPServerGroup] { model.mcpGroups }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -199,6 +197,7 @@ private struct MCPSettings: View {
             }
 
             legend
+            visibilitySettings
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -207,7 +206,7 @@ private struct MCPSettings: View {
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     ForEach(groups) { group in
-                        MCPGroupRow(group: group)
+                        MCPGroupRow(group: group, agents: model.settings.mcpVisibleAgents)
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
@@ -223,10 +222,35 @@ private struct MCPSettings: View {
         .onAppear { model.refreshMCP() }
     }
 
+    /// どこに出すか・どの LLM を出すかの設定。
+    private var visibilitySettings: some View {
+        HStack(spacing: 12) {
+            Toggle("メニューに表示", isOn: $model.settings.showMCPInMenu)
+                .toggleStyle(.checkbox)
+                .font(.caption)
+            Divider().frame(height: 14)
+            Text("表示する LLM").font(.caption).foregroundStyle(.secondary)
+            ForEach(AgentKind.allCases, id: \.self) { kind in
+                Toggle(kind.displayName, isOn: Binding(
+                    get: { !model.settings.mcpHiddenAgents.contains(kind) },
+                    set: { shown in
+                        var hidden = Set(model.settings.mcpHiddenAgents)
+                        if shown { hidden.remove(kind) } else { hidden.insert(kind) }
+                        model.settings.mcpHiddenAgents = AgentKind.allCases.filter { hidden.contains($0) }
+                    }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.caption)
+            }
+            Spacer(minLength: 0)
+        }
+        .onChange(of: model.settings) { _, _ in model.scheduleSettingsSave() }
+    }
+
     /// アイコンの読み方。カラー = その LLM で使える。
     private var legend: some View {
         HStack(spacing: 12) {
-            ForEach(AgentKind.allCases, id: \.self) { kind in
+            ForEach(model.settings.mcpVisibleAgents, id: \.self) { kind in
                 HStack(spacing: 4) {
                     AgentBrandIcon(kind: kind, active: true, size: 16)
                     Text(kind.displayName)
