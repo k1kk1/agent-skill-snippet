@@ -6,6 +6,25 @@ public enum RunOutcome: Sendable {
     case completed(RunReceipt)
 }
 
+/// 実行中の進み具合。UI のローディング表示に使う。
+public enum RunStage: Hashable, Sendable {
+    case buildingPrompt
+    case resolvingTarget
+    case startingAgent
+    case sending
+    case waitingForResponse
+
+    public var displayName: String {
+        switch self {
+        case .buildingPrompt: return "Prompt を組み立てています"
+        case .resolvingTarget: return "送信先を確認しています"
+        case .startingAgent: return "新しいセッションを起動しています"
+        case .sending: return "Prompt を送信しています"
+        case .waitingForResponse: return "応答を待っています"
+        }
+    }
+}
+
 public struct RunReceipt: Hashable, Sendable {
     public var recipeName: String
     public var mode: ExecutionMode
@@ -74,9 +93,11 @@ public struct RecipeRunner: Sendable {
         project: Project?,
         additionalPrompt: String = "",
         modeOverride: ExecutionMode? = nil,
-        waitTimeoutMS: Int? = nil
+        waitTimeoutMS: Int? = nil,
+        progress: (@Sendable (RunStage) -> Void)? = nil
     ) throws -> RunOutcome {
         let mode = modeOverride ?? recipe.mode
+        progress?(.buildingPrompt)
         let prompt: String
         do {
             prompt = try builder.build(
@@ -99,6 +120,7 @@ public struct RecipeRunner: Sendable {
         }
 
         do {
+            progress?(.resolvingTarget)
             let agents = try client.listAgents()
             switch try targetResolver.resolve(
                 recipe: recipe, project: project, agents: agents, agentKind: agentKind
@@ -106,10 +128,11 @@ public struct RecipeRunner: Sendable {
             case .resolved(let agent):
                 return .completed(try send(
                     prompt: prompt, recipe: recipe, mode: mode, agent: agent,
-                    project: project, waitTimeoutMS: waitTimeoutMS
+                    project: project, waitTimeoutMS: waitTimeoutMS, progress: progress
                 ))
 
             case .startNew(let kind, let newAgentProject):
+                progress?(.startingAgent)
                 let agent = try startAgent(
                     kind: kind,
                     project: newAgentProject,
@@ -118,7 +141,7 @@ public struct RecipeRunner: Sendable {
                 )
                 var receipt = try send(
                     prompt: prompt, recipe: recipe, mode: mode, agent: agent,
-                    project: project, waitTimeoutMS: waitTimeoutMS
+                    project: project, waitTimeoutMS: waitTimeoutMS, progress: progress
                 )
                 receipt.startedNewAgent = true
                 return .completed(receipt)
@@ -137,8 +160,10 @@ public struct RecipeRunner: Sendable {
         mode: ExecutionMode,
         agent: HerdrAgent,
         project: Project?,
-        waitTimeoutMS: Int? = nil
+        waitTimeoutMS: Int? = nil,
+        progress: (@Sendable (RunStage) -> Void)? = nil
     ) throws -> RunReceipt {
+        progress?(.sending)
         var delivered = true
         do {
             switch mode {
@@ -149,7 +174,9 @@ public struct RecipeRunner: Sendable {
                 // 入力状態にして編集してもらうので、その pane を前面に出す。
                 try? client.focusAgent(target: agent.id)
             case .submit:
-                delivered = try submit(prompt, to: agent, waitTimeoutMS: waitTimeoutMS)
+                delivered = try submit(
+                    prompt, to: agent, waitTimeoutMS: waitTimeoutMS, progress: progress
+                )
             }
         } catch {
             record(recipe: recipe, mode: mode, project: project, agent: agent, result: .failure, message: error.localizedDescription)
@@ -174,11 +201,17 @@ public struct RecipeRunner: Sendable {
     /// 起動直後の Agent は、フォルダの信頼確認・モデル選択・MCP のロードなどで
     /// 入力を受け付けないことがある。受理されたように見えて入力だけ落ちるため、
     /// 送ったあとに画面を読んで確かめ、必要なら 1 度だけ送り直す。
-    private func submit(_ prompt: String, to agent: HerdrAgent, waitTimeoutMS: Int?) throws -> Bool {
+    private func submit(
+        _ prompt: String,
+        to agent: HerdrAgent,
+        waitTimeoutMS: Int?,
+        progress: (@Sendable (RunStage) -> Void)? = nil
+    ) throws -> Bool {
         // 確認ダイアログが出ている間に送ると、その選択肢に文字を打ち込むことになる。
         // 起動直後は一瞬だけ blocked になることがあるので、少しだけ様子を見る。
         if isBlocked(agent), isBlocked(waitWhileBlocked(agent)) { return false }
 
+        if waitTimeoutMS != nil { progress?(.waitingForResponse) }
         try client.promptAgent(prompt, target: agent.id, waitTimeoutMS: waitTimeoutMS)
         if promptLanded(prompt, pane: agent.paneID) { return true }
 

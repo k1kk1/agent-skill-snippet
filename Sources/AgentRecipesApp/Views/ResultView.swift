@@ -10,7 +10,9 @@ struct ResultView: View {
     @State private var reply: String = ""
 
     var body: some View {
-        if let result = model.result {
+        if let run = model.activeRun {
+            RunningView(run: run)
+        } else if let result = model.result {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -80,6 +82,45 @@ struct ResultView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// 実行中の表示。Submit は数十秒かかることがあるので、進み具合と経過時間を出す。
+private struct RunningView: View {
+    let run: ActiveRun
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            ProgressView()
+                .controlSize(.large)
+            VStack(spacing: 4) {
+                Text(run.recipeName)
+                    .font(.title3.weight(.semibold))
+                Text(run.stage.displayName)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .animation(.default, value: run.stage)
+            }
+            // 1 秒ごとに描き直して、止まっていないことが分かるようにする。
+            TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
+                Text(elapsed(to: context.date))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Spacer()
+            Text("結果が返ると、この画面がそのまま結果に切り替わります。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
+    private func elapsed(to now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(run.startedAt)))
+        return String(format: "%d:%02d 経過", seconds / 60, seconds % 60)
     }
 }
 

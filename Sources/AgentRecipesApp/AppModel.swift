@@ -34,6 +34,8 @@ final class AppModel: ObservableObject {
     @Published var result: RunResult?
     /// 確認への回答を送っている最中。
     @Published var isAnswering = false
+    /// 実行中の Recipe。Result ウィンドウでローディングを出すために持つ。
+    @Published var activeRun: ActiveRun?
     /// 応答待ちの実行。Recipe 名ではなく実行ごとの UUID で対応付ける。
     @Published private(set) var pendingResults: [PendingResult] = []
 
@@ -285,6 +287,16 @@ final class AppModel: ObservableObject {
         let pendingID = waitMS.map { _ in UUID() }
         if let pendingID { pendingResults.append(PendingResult(id: pendingID, recipeName: recipe.name)) }
 
+        // 実行中であることを見せる。Submit は待ち時間が長いので特に必要。
+        if mode.requiresHerdr {
+            activeRun = ActiveRun(recipeName: recipe.name, mode: mode)
+            result = nil
+            PanelPresenter.shared.showResult(model: self)
+        }
+        let onStage: @Sendable (RunStage) -> Void = { stage in
+            Task { @MainActor in self.activeRun?.stage = stage }
+        }
+
         Task {
             do {
                 let outcome: RunOutcome = try await HerdrBackground.run {
@@ -297,13 +309,13 @@ final class AppModel: ObservableObject {
                         )
                         return .completed(try runner.send(
                             prompt: prompt, recipe: recipe, mode: mode, agent: agent,
-                            project: project, waitTimeoutMS: waitMS
+                            project: project, waitTimeoutMS: waitMS, progress: onStage
                         ))
                     }
                     return try runner.run(
                         recipe: recipe, values: values, project: project,
                         additionalPrompt: additionalPrompt,
-                        modeOverride: mode, waitTimeoutMS: waitMS
+                        modeOverride: mode, waitTimeoutMS: waitMS, progress: onStage
                     )
                 }
                 switch outcome {
@@ -312,6 +324,7 @@ final class AppModel: ObservableObject {
                 }
             } catch {
                 self.clearPending(pendingID)
+                self.activeRun = nil
                 ToastPresenter.shared.show(Toast(message: error.localizedDescription, isError: true))
             }
         }
@@ -324,11 +337,13 @@ final class AppModel: ObservableObject {
         clearPending(pendingID)
 
         guard let agent = receipt.agent else {
+            activeRun = nil
             if notify { ToastPresenter.shared.show(Toast(message: receipt.notificationText, isError: false)) }
             return
         }
         // 起動時の確認で止まっている場合は、待つ設定でなくても結果ウィンドウを出して答えてもらう。
         guard waited || !receipt.promptDelivered else {
+            activeRun = nil
             if notify { ToastPresenter.shared.show(Toast(message: receipt.notificationText, isError: false)) }
             return
         }
@@ -342,6 +357,7 @@ final class AppModel: ObservableObject {
                 rawOutput: output,
                 pendingPrompt: receipt.promptDelivered ? nil : receipt.prompt
             )
+            self.activeRun = nil
             self.result = result
             PanelPresenter.shared.showResult(model: self)
             if notify {
@@ -617,6 +633,15 @@ private enum HerdrBackground {
 }
 
 /// Submit の応答結果。
+/// 実行中の Recipe。
+struct ActiveRun: Identifiable {
+    let id = UUID()
+    var recipeName: String
+    var mode: ExecutionMode
+    var stage: RunStage = .buildingPrompt
+    var startedAt = Date()
+}
+
 /// 実行前プレビューの対象。
 struct RunPreview: Identifiable {
     let id = UUID()

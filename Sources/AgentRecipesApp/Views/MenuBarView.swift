@@ -35,6 +35,11 @@ struct MenuBarView: View {
 
             Divider()
             herdrStatus
+            // Herdr の Agent と MCP は別の話なので、区切って並べる。
+            if showsMCPSection {
+                Divider()
+                mcpStatus
+            }
             Divider()
             footer
         }
@@ -158,7 +163,7 @@ struct MenuBarView: View {
         }
     }
 
-    /// Herdr は MVP の前提なので、常に状態が見えるようにしておく。
+    /// Herdr の状態 (接続と Agent 数)。MVP の前提なので常に見せる。
     private var herdrStatus: some View {
         VStack(alignment: .leading, spacing: 4) {
             if !model.pendingResults.isEmpty {
@@ -170,9 +175,12 @@ struct MenuBarView: View {
                 .padding(.horizontal, 12)
             }
             statusLine
-            mcpStatus
         }
         .padding(.vertical, 6)
+    }
+
+    private var showsMCPSection: Bool {
+        model.settings.showMCPInMenu && (!model.mcpGroups.isEmpty || !model.mcpChecking.isEmpty)
     }
 
     /// MCP が使えないと Skill の実行が途中で止まるので、接続状態をここで見せる。
@@ -180,7 +188,7 @@ struct MenuBarView: View {
     @ViewBuilder
     private var mcpStatus: some View {
         let groups = model.mcpGroups
-        if model.settings.showMCPInMenu, !groups.isEmpty || !model.mcpChecking.isEmpty {
+        if showsMCPSection {
             Button {
                 dismiss()
                 PanelPresenter.shared.showSettings(model: model, tab: .mcp)
@@ -221,6 +229,7 @@ struct MenuBarView: View {
             }
             .buttonStyle(.plain)
             .help("Settings の MCP タブを開く")
+            .padding(.vertical, 6)
         }
     }
 
@@ -234,6 +243,7 @@ struct MenuBarView: View {
 
     private var statusLine: some View {
         HStack(spacing: 6) {
+            Text("Herdr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Circle()
                 .fill(model.connection.isHealthy ? Color.green : Color.orange)
                 .frame(width: 7, height: 7)
