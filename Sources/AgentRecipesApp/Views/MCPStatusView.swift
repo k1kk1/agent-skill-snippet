@@ -3,27 +3,39 @@ import AppKit
 import AgentRecipesCore
 
 extension AgentKind {
-    /// 本家アイコンが無いときのフォールバック色。
+    /// グリフに付ける色。背景が透けるぶん、線の色でブランドを示す。
     var tint: Color {
         switch self {
-        case .claude: return .orange
-        case .codex: return .teal
+        // Anthropic のクレイオレンジ。
+        case .claude: return Color(red: 0.85, green: 0.47, blue: 0.34)
+        // OpenAI のマークは黒／白なので、外観に合わせる。
+        case .codex: return .primary
         case .gemini: return .indigo
         }
     }
 
-    /// アイコンを借りる公式アプリ。インストールされていればそのアイコンを使う。
-    /// アプリ側にロゴ画像を同梱しないので、再配布の問題が起きない。
-    var brandBundleIdentifiers: [String] {
+    /// アイコンを借りる公式アプリと、その中のメニューバー用テンプレート画像。
+    ///
+    /// アプリ本体のアイコン (icns) は角丸の塗り四角なので、一覧に並べると
+    /// 背景のタイルだけが浮いて見える。メニューバー用の画像は背景が透明な
+    /// 単色グリフなので、こちらを読んで配色はアプリ側で付ける。
+    /// 画像は同梱せず実行時に読むため、ロゴの再配布にもならない。
+    var brandGlyph: (bundleIdentifiers: [String], resourceNames: [String])? {
         switch self {
-        case .claude: return ["com.anthropic.claudefordesktop", "com.anthropic.claude"]
-        case .codex: return ["com.openai.codex", "com.openai.chat"]
-        // Gemini 単体の macOS アプリは無いので、同じ Google の Antigravity を代用する。
-        // どちらも無ければ下のフォールバック（4 芒星）で描く。
-        case .gemini: return [
-            "com.google.gemini", "com.google.Gemini",
-            "com.google.antigravity", "com.google.antigravity-ide",
-        ]
+        case .claude:
+            return (
+                ["com.anthropic.claudefordesktop", "com.anthropic.claude"],
+                ["TrayIconTemplate@3x.png", "TrayIconTemplate@2x.png", "TrayIconTemplate.png"]
+            )
+        case .codex:
+            return (
+                ["com.openai.codex", "com.openai.chat"],
+                ["chatgptTemplate@2x.png", "chatgptTemplate.png"]
+            )
+        // Gemini / Antigravity は透過のグリフを持たない (icns だけ) ので、
+        // 下のフォールバック (4 芒星) で描く。
+        case .gemini:
+            return nil
         }
     }
 
@@ -42,7 +54,7 @@ extension AgentKind {
     }
 }
 
-/// 公式アプリのアイコンを 1 度だけ読み出して使い回す。
+/// 公式アプリのグリフを 1 度だけ読み出して使い回す。
 @MainActor
 final class BrandIconCache {
     static let shared = BrandIconCache()
@@ -52,12 +64,26 @@ final class BrandIconCache {
 
     func icon(for kind: AgentKind) -> NSImage? {
         if let cached = cache[kind] { return cached }
-        let url = kind.brandBundleIdentifiers.lazy
-            .compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
-            .first
-        let image = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
+        let image = Self.load(kind)
         cache[kind] = image
         return image
+    }
+
+    private static func load(_ kind: AgentKind) -> NSImage? {
+        guard let glyph = kind.brandGlyph else { return nil }
+        let apps = glyph.bundleIdentifiers.compactMap {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)
+        }
+        for app in apps {
+            for name in glyph.resourceNames {
+                let url = app.appending(path: "Contents/Resources").appending(path: name)
+                guard let image = NSImage(contentsOf: url) else { continue }
+                // 単色のテンプレート画像として扱い、色はアプリ側で付ける。
+                image.isTemplate = true
+                return image
+            }
+        }
+        return nil
     }
 }
 
@@ -86,11 +112,11 @@ struct AgentBrandIcon: View {
         if let image = BrandIconCache.shared.icon(for: kind) {
             Image(nsImage: image)
                 .resizable()
+                .renderingMode(.template)
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
-                // 未設定の LLM はモノクロに落として、使えるものだけ目立たせる。
-                .grayscale(active ? 0 : 1)
-                .opacity(active ? 1 : 0.4)
+                // 未設定の LLM は薄いグレーにして、使えるものだけ目立たせる。
+                .foregroundStyle(active ? kind.tint : Color.secondary.opacity(0.35))
         } else if let gradient = kind.fallbackGradient {
             // Gemini の 4 芒星。カラーのときだけブランド配色のグラデーションで描く。
             Image(systemName: "sparkle")
