@@ -53,6 +53,10 @@ final class AppModel: ObservableObject {
     private var initialValuesCache: [Recipe.ID: [String: String]] = [:]
     /// 実行中の Task。中止ボタンから止める。
     private var runTask: Task<Void, Never>?
+    /// 結果ウィンドウを開いているあいだ、pane を読み直し続ける Task。
+    private var resultPollTask: Task<Void, Never>?
+    /// 保留していた Prompt を送っている最中。二重送信を防ぐ。
+    private var isSendingPendingPrompt = false
 
     /// 残しておく結果の数。
     static let resultLimit = 10
@@ -480,45 +484,174 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 確認への回答を送り、画面が変わるのを少しだけ待って読み直す。
+    ///
+    /// ここで応答完了まで待たないのが重要。Agent が続けて確認してくると
+    /// `agent wait --until idle` は帰ってこず、次の確認に気づけなくなる。
+    /// 以降の変化はポーリングが拾う。
     private func sendToAgent(result: RunResult, _ action: @escaping @Sendable (HerdrClient) throws -> Void) {
         guard let agent = result.agent else { return }
         let client = makeClient()
-        let timeoutMS = settings.resultTimeoutSeconds * 1000
-        // 起動時の確認で送れていない Prompt があれば、答えたあとに続けて送る。
-        let pending = result.pendingPrompt
-        let notify = settings.notificationsEnabled
         isAnswering = true
         Task {
-            let outcome = await HerdrBackground.run { () -> (output: String, sentPending: Bool)? in
+            let output = await HerdrBackground.run { () -> String? in
                 do {
                     try action(client)
                 } catch {
                     return nil
                 }
-                // 答えたあとの続きを待ってから読む。待てなくても読み直しはする。
-                _ = client.waitForAgent(target: agent.id, timeoutMS: timeoutMS)
-                var sentPending = false
-                if let pending {
-                    let latest = client.waitUntilInteractive(target: agent.id)
-                    if (latest?.status ?? "").lowercased() != "blocked" {
-                        try? client.promptAgent(pending, target: agent.id, waitTimeoutMS: timeoutMS)
-                        sentPending = true
-                    }
-                }
-                return ((try? client.readPane(agent.paneID, lines: 200)) ?? "", sentPending)
+                // 画面が描き変わるまでの間だけ待つ。
+                Thread.sleep(forTimeInterval: 1.5)
+                return (try? client.readPane(agent.paneID, lines: 200)) ?? ""
             }
             self.isAnswering = false
-            guard let outcome else {
+            guard let output else {
                 ToastPresenter.shared.show(Toast(message: "Agent へ送信できませんでした", isError: true))
                 return
             }
             var updated = result
-            updated.rawOutput = outcome.output
-            updated.pendingPrompt = outcome.sentPending ? nil : pending
+            updated.rawOutput = output
+            updated.lastChangeAt = Date()
             self.result = updated
-            if outcome.sentPending, notify {
+            // 送れていない Prompt があれば、確認が消えたことをポーリングが見て送る。
+            self.startResultPolling()
+        }
+    }
+
+    // MARK: - 結果の追従
+
+    /// pane を読み直す間隔。
+    static let resultPollInterval: Duration = .seconds(2)
+    /// 結果ウィンドウを閉じているときの間隔。
+    static let idlePollInterval: Duration = .seconds(5)
+
+    /// 結果ウィンドウを開いているあいだ、表示中の結果を追いかける。
+    ///
+    /// 送信直後に 1 回読むだけでは、
+    /// - Agent が続けて 2 つ目の確認を出した
+    /// - 利用者が Herdr (tmux) 側で直接答えた
+    /// といった変化にアプリが気づけない。
+    func startResultPolling() {
+        guard resultPollTask == nil else { return }
+        resultPollTask = Task { @MainActor in
+            while !Task.isCancelled {
+                // 画面に出していないあいだは、間隔を空けて herdr の呼び出しを減らす。
+                let visible = PanelPresenter.shared.isResultWindowOpen
+                try? await Task.sleep(for: visible ? Self.resultPollInterval : Self.idlePollInterval)
+                guard !Task.isCancelled else { break }
+                let targets = pollTargets
+                guard !targets.isEmpty else { break }
+                for id in targets { await pollResult(id) }
+            }
+            resultPollTask = nil
+        }
+    }
+
+    func stopResultPolling() {
+        resultPollTask?.cancel()
+        resultPollTask = nil
+    }
+
+    /// ウィンドウを閉じたあとも結果を追いかける時間 (最後に動きがあってから)。
+    /// Agent は答えたあとに続けて確認してくることがある。
+    static let backgroundWatchWindow: TimeInterval = 3 * 60
+
+    /// 読み直す対象。
+    /// - 表示中の結果 (ウィンドウを開いているとき)
+    /// - まだ Prompt を送れていない結果 / 確認待ちの結果
+    /// - 送信から間もない結果 (続けて確認してくることがあるため)
+    private var pollTargets: [RunResult.ID] {
+        var ids: [RunResult.ID] = []
+        if PanelPresenter.shared.isResultWindowOpen, let current = result, current.agent != nil {
+            ids.append(current.id)
+        }
+        for candidate in results where candidate.agent != nil && !ids.contains(candidate.id) {
+            let watching = candidate.pendingPrompt != nil
+                || candidate.question != nil
+                || Date().timeIntervalSince(candidate.lastChangeAt) < Self.backgroundWatchWindow
+            if watching { ids.append(candidate.id) }
+        }
+        return ids
+    }
+
+    /// 結果の pane を読み直し、変化があれば差し替える。
+    private func pollResult(_ id: RunResult.ID) async {
+        // 送信中・回答中は相手が読み書きしているので、次の周期に回す。
+        guard !isAnswering, !isSendingPendingPrompt, activeRun == nil else { return }
+        guard let current = results.first(where: { $0.id == id }), let agent = current.agent else { return }
+
+        let client = makeClient()
+        let output = await HerdrBackground.run {
+            (try? client.readPane(agent.paneID, lines: 200)) ?? ""
+        }
+        guard !output.isEmpty else { return }
+        // 読んでいるあいだに結果が消えていることがある。
+        guard let index = results.firstIndex(where: { $0.id == id }) else { return }
+        guard results[index].rawOutput != output else { return }
+
+        let previousQuestion = results[index].question
+        results[index].rawOutput = output
+        results[index].lastChangeAt = Date()
+        let question = results[index].question
+
+        // 質問文には経過秒数などが混ざるので、数字を落とした形で「別の確認か」を見る。
+        // 文字列そのままで比べると、同じ確認に何度も反応してしまう。
+        let signature = Self.questionSignature(question)
+        if signature != nil, signature != Self.questionSignature(previousQuestion) {
+            // 閉じているときだけ開き直す。開いていれば画面がそのまま確認カードに変わる。
+            if !PanelPresenter.shared.isResultWindowOpen {
+                selectedResultID = results[index].id
+                PanelPresenter.shared.showResult(model: self)
+            }
+            if settings.notificationsEnabled {
                 ToastPresenter.shared.show(Toast(
-                    message: "\(result.recipeName) — 確認に答えたので Prompt を送りました",
+                    message: "\(results[index].recipeName) — \(agent.displayName) が確認を求めています",
+                    isError: true
+                ))
+            }
+        }
+        // Herdr 側で起動時の確認に答えられた場合は、待っていた Prompt をここで送る。
+        if question == nil, results[index].pendingPrompt != nil {
+            sendPendingPrompt(for: results[index].id)
+        }
+    }
+
+    /// 同じ確認かどうかを見るための指紋。経過時間などの数字は落とす。
+    private static func questionSignature(_ question: AgentQuestion?) -> String? {
+        guard let question else { return nil }
+        let prompt = question.prompt.filter { !$0.isNumber }.trimmingCharacters(in: .whitespaces)
+        return prompt + "|" + question.options.map(\.id).joined(separator: ",")
+    }
+
+    /// 起動時の確認で送れなかった Prompt を、答えが済んだあとに送る。
+    private func sendPendingPrompt(for id: RunResult.ID) {
+        guard !isSendingPendingPrompt,
+              let index = results.firstIndex(where: { $0.id == id }),
+              let prompt = results[index].pendingPrompt,
+              let agent = results[index].agent else { return }
+        let recipeName = results[index].recipeName
+        let client = makeClient()
+        let notify = settings.notificationsEnabled
+        isSendingPendingPrompt = true
+        Task {
+            let sent = await HerdrBackground.run { () -> Bool in
+                let latest = client.waitUntilInteractive(target: agent.id)
+                guard (latest?.status ?? "").lowercased() != "blocked" else { return false }
+                do {
+                    // 応答は待たない。待つとその間ポーリングが止まり、
+                    // 次の確認に気づけなくなる (結果は読み直しで反映される)。
+                    try client.promptAgent(prompt, target: agent.id)
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            self.isSendingPendingPrompt = false
+            guard sent, let index = self.results.firstIndex(where: { $0.id == id }) else { return }
+            self.results[index].pendingPrompt = nil
+            if notify {
+                ToastPresenter.shared.show(Toast(
+                    message: "\(recipeName) — 確認に答えられたので Prompt を送りました",
                     isError: false
                 ))
             }
@@ -787,6 +920,8 @@ struct RunResult: Identifiable {
     /// 実行に失敗した理由。トーストだけだと消えてしまうので結果として残す。
     var failure: String?
     var finishedAt = Date()
+    /// 最後に画面が変わった時刻。しばらく動きがなければ読み直しをやめる。
+    var lastChangeAt = Date()
 
     /// Agent が確認待ちで止まっている場合の質問。
     var question: AgentQuestion? {

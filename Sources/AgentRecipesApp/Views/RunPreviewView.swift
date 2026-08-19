@@ -31,11 +31,16 @@ struct RunPreviewView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
+                    // 設定を書き換えるだけだと保存されず、次の起動で戻ってしまう。
                     Toggle("次回から確認しない", isOn: Binding(
                         get: { !model.settings.previewBeforeRun },
-                        set: { model.settings.previewBeforeRun = !$0 }
+                        set: {
+                            model.settings.previewBeforeRun = !$0
+                            model.scheduleSettingsSave()
+                        }
                     ))
                     .toggleStyle(.checkbox)
+                    .help("Settings の General からいつでも戻せます")
                 }
             } trailing: {
                 if preview.isPreviewOnly {

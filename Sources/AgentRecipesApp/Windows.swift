@@ -71,6 +71,15 @@ final class PanelPresenter {
         )
         resultWindow = window
         present(window)
+        // 開いているあいだは pane を読み続ける。1 回読んだきりだと、2 つ目の確認や
+        // Herdr 側で直接答えた結果に気づけない。
+        model.startResultPolling()
+    }
+
+    /// 結果ウィンドウを開いているか (最小化中も開いている扱い)。
+    var isResultWindowOpen: Bool {
+        guard let window = resultWindow else { return false }
+        return window.isVisible || window.isMiniaturized
     }
 
     private func makeWindow(
