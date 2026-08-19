@@ -78,12 +78,81 @@ final class BrandIconCache {
             for name in glyph.resourceNames {
                 let url = app.appending(path: "Contents/Resources").appending(path: name)
                 guard let image = NSImage(contentsOf: url) else { continue }
+                // 余白の大きさは公式アプリごとに違うので、絵の部分だけに切り詰める。
+                // そのまま並べるとグリフの大きさが揃わない。
+                let glyphImage = trimmingTransparentEdges(image) ?? image
                 // 単色のテンプレート画像として扱い、色はアプリ側で付ける。
-                image.isTemplate = true
-                return image
+                glyphImage.isTemplate = true
+                return glyphImage
             }
         }
         return nil
+    }
+
+    /// 透明な余白を落として、絵の部分だけの画像にする。
+    private static func trimmingTransparentEdges(_ image: NSImage) -> NSImage? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let bitmap = NSBitmapImageRep(cgImage: cgImage).representationUsingPixels
+        else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 0, height > 0 else { return nil }
+
+        var minX = width, minY = height, maxX = -1, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width {
+                // 圧縮のにじみを拾わないよう、ごく薄い点は余白として扱う。
+                guard bitmap.alpha(x: x, y: y) > 12 else { continue }
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+
+        // CGImage も走査も左上が原点なので、そのまま切り出せる。
+        let box = CGRect(
+            x: minX, y: minY,
+            width: maxX - minX + 1, height: maxY - minY + 1
+        )
+        guard let cropped = cgImage.cropping(to: box) else { return nil }
+        return NSImage(
+            cgImage: cropped,
+            size: NSSize(width: cropped.width, height: cropped.height)
+        )
+    }
+}
+
+/// アルファだけを見るための、画素そのままのビットマップ。
+private struct PixelAlpha {
+    let data: [UInt8]
+    let width: Int
+    let bytesPerRow: Int
+    let alphaOffset: Int
+
+    func alpha(x: Int, y: Int) -> UInt8 {
+        data[y * bytesPerRow + x * 4 + alphaOffset]
+    }
+}
+
+private extension NSBitmapImageRep {
+    /// 画素を直接読める形にそろえる。colorAt は 1 画素ずつ色空間の変換が入り、
+    /// アイコン数×画素数ぶん呼ぶと目に見えて遅い。
+    var representationUsingPixels: PixelAlpha? {
+        let width = pixelsWide
+        let height = pixelsHigh
+        guard width > 0, height > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(
+            data: &buffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let cgImage else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return PixelAlpha(data: buffer, width: width, bytesPerRow: width * 4, alphaOffset: 3)
     }
 }
 
@@ -119,13 +188,14 @@ struct AgentBrandIcon: View {
                 .foregroundStyle(active ? kind.tint : Color.secondary.opacity(0.35))
         } else if let gradient = kind.fallbackGradient {
             // Gemini の 4 芒星。カラーのときだけブランド配色のグラデーションで描く。
+            // グリフ側は余白を落として枠いっぱいに描くので、記号も揃える。
             Image(systemName: "sparkle")
-                .font(.system(size: size * 0.9))
+                .font(.system(size: size))
                 .foregroundStyle(active ? AnyShapeStyle(gradient) : AnyShapeStyle(Color.secondary.opacity(0.35)))
                 .frame(width: size, height: size)
         } else {
             Image(systemName: kind.symbolName)
-                .font(.system(size: size * 0.85))
+                .font(.system(size: size * 0.95))
                 .foregroundStyle(active ? kind.tint : Color.secondary.opacity(0.35))
                 .frame(width: size, height: size)
         }
