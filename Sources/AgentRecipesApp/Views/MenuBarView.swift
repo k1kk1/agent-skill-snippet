@@ -381,16 +381,14 @@ struct RecipeRow: View {
             HStack(spacing: 9) {
                 Text(recipe.name)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // 記号と「クリックで何が起きるか」は同じ場所を使う。
-                // 常に両方出すと行が混み、入れ替えれば他の行もずれない。
-                ZStack(alignment: .trailing) {
-                    RecipeInputBadges(recipe: recipe)
-                        .opacity(showsAction ? 0 : 1)
-                    if showsAction {
-                        trailingAccessory
-                    }
+                    .truncationMode(.tail)
+                    // 場所が足りないときに縮むのは名前。記号は動かさない。
+                    .layoutPriority(0)
+                Spacer(minLength: 4)
+                if showsAction {
+                    trailingAccessory.layoutPriority(1)
                 }
+                RecipeInputBadges(recipe: recipe)
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)
