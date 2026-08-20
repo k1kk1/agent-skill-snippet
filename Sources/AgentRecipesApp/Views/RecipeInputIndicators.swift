@@ -1,52 +1,194 @@
 import SwiftUI
 import AgentRecipesCore
 
-/// Recipe が必要とする入力と、その取得元をコンパクトに示す共通表示。
-struct RecipeInputBadges: View {
+/// 一覧の行に出す記号のもと。
+///
+/// 記号とその状態は、この 1 か所だけで決める。
+/// メニューのバッジと、Recipe 編集画面の凡例が同じ計算を使うことで、
+/// 「この記号はどの設定のことか」がずれないようにする。
+struct RecipeBadges {
+    enum State: Equatable {
+        /// 今回使う。
+        case active
+        /// 使えるが、今回は使わない。
+        case inactive
+        /// この Recipe には関係がない。
+        case hidden
+    }
+
+    /// 記号のまとまり。
+    enum Group: Int, CaseIterable {
+        /// 何を渡すか (引数の形式)。
+        case format
+        /// どう入れるか (入力方法)。
+        case input
+
+        var title: String {
+            switch self {
+            case .format: return "何を渡すか"
+            case .input: return "どう入れるか"
+            }
+        }
+    }
+
+    struct Item: Identifiable {
+        var id: String
+        var symbol: String
+        /// 記号が示すもの。
+        var title: String
+        var state: State
+        /// どの設定でそうなっているか。凡例に出す。
+        var detail: String
+        var group: Group
+    }
+
     let recipe: Recipe
-    var compact: Bool = false
 
     private var argumentTypes: [ArgumentType] {
-        Array(Set(recipe.arguments.map(\.type))).sorted { $0.rawValue < $1.rawValue }
+        Array(Set(recipe.arguments.map(\.type)))
     }
 
-    private var usesClipboard: Bool {
-        recipe.arguments.contains(where: \.useClipboardAsDefault)
-            || TemplateRenderer.placeholders(in: recipe.template).contains("clipboard")
+    private func arguments(ofType type: ArgumentType) -> [ArgumentSpec] {
+        recipe.arguments.filter { $0.type == type }
     }
 
-    /// ⌥クリックでフォームを開き、既定値や Clipboard の値を上書きできるか。
-    private var canOpenForm: Bool {
+    /// 引数の既定値に Clipboard を使うか、Prompt に {clipboard} があるか。
+    private var clipboardArguments: [ArgumentSpec] {
+        recipe.arguments.filter(\.useClipboardAsDefault)
+    }
+
+    private var templateUsesClipboard: Bool {
+        TemplateRenderer.placeholders(in: recipe.template).contains("clipboard")
+    }
+
+    var usesClipboard: Bool { !clipboardArguments.isEmpty || templateUsesClipboard }
+
+    /// ⌥クリック・右クリックでフォームを開き、既定値や Clipboard の値を上書きできるか。
+    var canOpenForm: Bool {
         !recipe.arguments.isEmpty
             || recipe.acceptsAdditionalPrompt
             || recipe.target.askProject
     }
 
-    private enum CompactState: Equatable {
-        case active
-        case inactive
-        case hidden
+    var items: [Item] {
+        [
+            formatItem(.string),
+            formatItem(.multiline),
+            formatItem(.url),
+            formatItem(.choice),
+            clipboardItem,
+            formItem,
+        ]
     }
 
+    func items(in group: Group) -> [Item] {
+        items.filter { $0.group == group }
+    }
+
+    private func formatItem(_ type: ArgumentType) -> Item {
+        let matching = arguments(ofType: type)
+        // 文字列だけは、補足プロンプトを受け付ける Recipe でも「使える」扱いにする。
+        let acceptsFreeText = type == .string && recipe.acceptsAdditionalPrompt
+        return Item(
+            id: type.rawValue,
+            symbol: type.symbolName,
+            title: title(for: type),
+            state: matching.isEmpty ? (acceptsFreeText ? .inactive : .hidden) : .active,
+            detail: matching.isEmpty
+                ? (acceptsFreeText ? "補足プロンプトを受け付ける" : "この形式の引数はない")
+                : "「引数」の " + matching.map(\.name).joined(separator: ", "),
+            group: .format
+        )
+    }
+
+    private func title(for type: ArgumentType) -> String {
+        switch type {
+        case .string: return "文字列の引数"
+        case .multiline: return "複数行の引数"
+        case .url: return "URL の引数"
+        case .choice: return "選択式の引数"
+        }
+    }
+
+    private var clipboardItem: Item {
+        let detail: String
+        if !clipboardArguments.isEmpty {
+            detail = "「引数」の " + clipboardArguments.map(\.name).joined(separator: ", ")
+                + " が Clipboard を既定値にしている"
+        } else if templateUsesClipboard {
+            detail = "「Prompt」に {clipboard} がある"
+        } else {
+            detail = "Clipboard は使わない"
+        }
+        return Item(
+            id: "clipboard",
+            symbol: "doc.on.clipboard",
+            title: "Clipboard から入れる",
+            state: usesClipboard ? .active : .hidden,
+            detail: detail,
+            group: .input
+        )
+    }
+
+    private var formItem: Item {
+        let state: State = recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
+        let detail: String
+        switch state {
+        case .active:
+            detail = recipe.target.askProject && !recipe.needsTypedArgument
+                ? "「実行方法」で送信先を毎回選ぶ設定になっている"
+                : "既定値も Clipboard も無い引数があるので、実行前に入力する"
+        case .inactive:
+            detail = "⌥クリック・右クリックで値を上書きできる"
+        case .hidden:
+            detail = "入力する項目がない"
+        }
+        return Item(
+            id: "form",
+            symbol: "rectangle.and.pencil.and.ellipsis",
+            title: "フォームで入力する",
+            state: state,
+            detail: detail,
+            group: .input
+        )
+    }
+}
+
+private extension Recipe {
+    /// 実行前に打ち込む必要がある引数を持つか。
+    var needsTypedArgument: Bool {
+        arguments.contains { argument in
+            if argument.useClipboardAsDefault { return false }
+            if let value = argument.defaultValue, !value.isEmpty { return false }
+            return true
+        }
+    }
+}
+
+/// Recipe が必要とする入力と、その取得元をコンパクトに示す共通表示。
+///
+/// メニューバーでは種類ごとに常に同じ位置を使う。空のスロットも確保することで、
+/// Recipe ごとに後続の記号が横に動かない。
+/// 等間隔に並べるとどれが何の話か読み取れないので、まとまりの間を空ける。
+struct RecipeInputBadges: View {
+    let recipe: Recipe
+
+    private var badges: RecipeBadges { RecipeBadges(recipe: recipe) }
+
+    /// 同じまとまりの記号どうしの間隔。
+    static let slotSpacing: CGFloat = 5
+    /// 別のまとまりに移るときの間隔。
+    static let groupSpacing: CGFloat = 12
+
     var body: some View {
-        Group {
-            if compact {
-                compactBadges
-            } else {
-                HStack(spacing: 4) {
-                    if recipe.arguments.isEmpty {
-                        badge("入力なし", symbol: "checkmark.circle", tint: .secondary)
-                    } else {
-                        ForEach(argumentTypes, id: \.self) { type in
-                            badge(type.displayName, symbol: type.symbolName, tint: .blue)
-                        }
-                        badge("引数 \(recipe.arguments.count)", symbol: "slider.horizontal.3", tint: .secondary)
-                    }
-                    if usesClipboard {
-                        badge("Clipboard", symbol: "doc.on.clipboard", tint: .purple)
-                    }
-                    if recipe.needsUserInput {
-                        badge("フォーム", symbol: "rectangle.and.pencil.and.ellipsis", tint: .orange)
+        HStack(spacing: Self.groupSpacing) {
+            ForEach(RecipeBadges.Group.allCases, id: \.self) { group in
+                HStack(spacing: Self.slotSpacing) {
+                    ForEach(badges.items(in: group)) { item in
+                        RecipeBadgeIcon(item: item, size: 13)
+                            .frame(width: 15, height: 17)
+                            .help(item.title)
+                            .accessibilityHidden(true)
                     }
                 }
             }
@@ -55,97 +197,105 @@ struct RecipeInputBadges: View {
         .accessibilityLabel(accessibilityText)
     }
 
-    /// メニューバーでは種類ごとに常に同じ位置を使う。
-    /// 空のスロットも確保することで、Recipe ごとに後続の記号が横に動かない。
-    ///
-    /// 5 つを等間隔に並べると、どれが何の話か読み取れない。
-    /// 「何を渡すか（形式）」と「どこから入れるか（入力方法）」で間を空ける。
-    private var compactBadges: some View {
-        HStack(spacing: Self.groupSpacing) {
-            HStack(spacing: Self.slotSpacing) {
-                compactSlot(
-                    ArgumentType.string.symbolName,
-                    label: ArgumentType.string.displayName,
-                    state: argumentTypes.contains(.string)
-                        ? .active
-                        : (recipe.acceptsAdditionalPrompt ? .inactive : .hidden)
-                )
-                compactSlot(
-                    ArgumentType.multiline.symbolName,
-                    label: ArgumentType.multiline.displayName,
-                    state: argumentTypes.contains(.multiline) ? .active : .hidden
-                )
-                compactSlot(
-                    ArgumentType.url.symbolName,
-                    label: ArgumentType.url.displayName,
-                    state: argumentTypes.contains(.url) ? .active : .hidden
-                )
-            }
-            HStack(spacing: Self.slotSpacing) {
-                compactSlot(
-                    "doc.on.clipboard",
-                    label: "Clipboard から入れる",
-                    state: usesClipboard ? .active : .hidden
-                )
-                compactSlot(
-                    "rectangle.and.pencil.and.ellipsis",
-                    label: recipe.needsUserInput
-                        ? "フォームで入力する"
-                        : (canOpenForm ? "フォームで上書きできる（⌥クリック）" : "フォーム入力なし"),
-                    state: recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
-                )
-            }
-        }
+    private var accessibilityText: String {
+        var parts: [String] = []
+        parts.append(recipe.arguments.isEmpty ? "入力なし" : "引数 \(recipe.arguments.count) 件")
+        let active = badges.items(in: .format).filter { $0.state == .active }
+        if !active.isEmpty { parts.append("形式: " + active.map(\.title).joined(separator: "、")) }
+        if badges.usesClipboard { parts.append("Clipboard を使用") }
+        if recipe.needsUserInput { parts.append("フォーム入力あり") }
+        if recipe.acceptsAdditionalPrompt { parts.append("補足プロンプトを受け付ける") }
+        return parts.joined(separator: "。")
+    }
+}
+
+/// 記号 1 つ。色は 3 段階だけにして、行が騒がしくならないようにする。
+/// 使う = オレンジ / 使えるが今回は使わない = 白 / 対象外 = グレー。
+struct RecipeBadgeIcon: View {
+    let item: RecipeBadges.Item
+    var size: CGFloat = 13
+
+    var body: some View {
+        Image(systemName: item.symbol)
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(Self.color(for: item.state))
     }
 
-    /// 同じ話の記号どうしの間隔。
-    static let slotSpacing: CGFloat = 5
-    /// 別の話に移るときの間隔。
-    static let groupSpacing: CGFloat = 12
-
-    /// 色は 3 段階だけにして、行が騒がしくならないようにする。
-    /// 使う = オレンジ / 使えるが今回は使わない = 白 / 対象外 = グレー。
-    private func compactSlot(_ symbol: String, label: String, state: CompactState) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(color(for: state))
-            .frame(width: 15, height: 17)
-            .help(label)
-            .accessibilityHidden(true)
-    }
-
-    private func color(for state: CompactState) -> Color {
+    static func color(for state: RecipeBadges.State) -> Color {
         switch state {
         case .active: return .orange
         case .inactive: return .primary
         case .hidden: return Color.secondary.opacity(0.35)
         }
     }
+}
 
-    @ViewBuilder
-    private func badge(_ text: String, symbol: String, tint: Color) -> some View {
-        Group {
-            if compact {
-                Label(text, systemImage: symbol).labelStyle(.iconOnly)
-            } else {
-                Label(text, systemImage: symbol).labelStyle(.titleAndIcon)
+/// 編集画面に出す凡例。メニューの行に並ぶ記号と、この Recipe の設定を突き合わせる。
+struct RecipeBadgeLegend: View {
+    let recipe: Recipe
+    /// クリックしたときに実際に起きること。
+    let effectiveMode: ExecutionMode
+
+    private var badges: RecipeBadges { RecipeBadges(recipe: recipe) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
+            // メニューに出るのと同じ並び。
+            HStack(spacing: RecipeInputBadges.groupSpacing) {
+                RecipeInputBadges(recipe: recipe)
+                Divider().frame(height: 13)
+                Image(systemName: effectiveMode.symbolName)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
             }
+            .padding(.vertical, 2)
+
+            Divider()
+
+            ForEach(RecipeBadges.Group.allCases, id: \.self) { group in
+                ForEach(badges.items(in: group)) { item in
+                    row(
+                        icon: AnyView(RecipeBadgeIcon(item: item)),
+                        title: item.title,
+                        detail: item.detail,
+                        dimmed: item.state == .hidden
+                    )
+                }
+            }
+            row(
+                icon: AnyView(
+                    Image(systemName: effectiveMode.symbolName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                ),
+                title: "クリックしたときの動き",
+                detail: modeDetail,
+                dimmed: false
+            )
         }
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, compact ? 1 : 5)
-            .padding(.vertical, compact ? 1 : 3)
-            .background(tint.opacity(compact ? 0 : 0.12), in: Capsule())
-            .help(text)
     }
 
-    private var accessibilityText: String {
-        var parts: [String] = []
-        parts.append(recipe.arguments.isEmpty ? "入力なし" : "引数 \(recipe.arguments.count) 件")
-        if !argumentTypes.isEmpty { parts.append("形式: " + argumentTypes.map(\.displayName).joined(separator: "、")) }
-        if usesClipboard { parts.append("Clipboard を使用") }
-        if recipe.needsUserInput { parts.append("フォーム入力あり") }
-        if recipe.acceptsAdditionalPrompt { parts.append("補足プロンプトを受け付ける") }
-        return parts.joined(separator: "。")
+    private var modeDetail: String {
+        if effectiveMode != recipe.mode {
+            return "「実行方法」は \(recipe.mode.displayName)。"
+                + "入力が足りないので \(effectiveMode.displayName) に切り替わる"
+        }
+        return "「実行方法」の \(recipe.mode.displayName)"
+    }
+
+    private func row(icon: AnyView, title: String, detail: String, dimmed: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            icon.frame(width: 16)
+            Text(title)
+                .font(.callout)
+                .frame(width: 150, alignment: .leading)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .opacity(dimmed ? 0.55 : 1)
     }
 }

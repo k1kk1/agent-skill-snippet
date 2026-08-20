@@ -159,6 +159,15 @@ public enum ExecutionMode: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// 一覧の行で「クリックすると何が起きるか」を示す記号。
+    public var symbolName: String {
+        switch self {
+        case .copy: return "doc.on.clipboard"
+        case .paste: return "text.insert"
+        case .submit: return "paperplane"
+        }
+    }
+
     public var editorIcon: String {
         switch self {
         case .copy: return "doc.on.doc"

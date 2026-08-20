@@ -380,10 +380,10 @@ struct RecipeRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // 「何を渡すか」と「どう送るか」は別の話なので、細い線で分ける。
-                RecipeInputBadges(recipe: recipe, compact: true)
+                RecipeInputBadges(recipe: recipe)
                 Divider().frame(height: 13)
                 // クリックで何が起きるかは、文字ではなくアイコンで示す。
-                Image(systemName: icon)
+                Image(systemName: effectiveMode.symbolName)
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
@@ -409,13 +409,6 @@ struct RecipeRow: View {
         return hovering ? Color.accentColor.opacity(0.15) : .clear
     }
 
-    private var icon: String {
-        switch effectiveMode {
-        case .copy: return "doc.on.clipboard"
-        case .paste: return "text.insert"
-        case .submit: return "paperplane"
-        }
-    }
 }
 
 struct MenuRowButton: View {

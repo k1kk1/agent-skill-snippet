@@ -332,7 +332,7 @@ private struct ManagerRecipeRow: View {
                         .lineLimit(1)
                 }
                 // 必要な入力の種類。詳細はツールチップで読める。
-                RecipeInputBadges(recipe: recipe, compact: true)
+                RecipeInputBadges(recipe: recipe)
             }
             Spacer(minLength: 4)
             if recipe.favorite {
@@ -416,6 +416,10 @@ struct RecipeEditorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
                 editorHeader
+                // 一覧の行に並ぶ記号が、どの設定のことなのかを突き合わせられるようにする。
+                EditorSection(title: "メニューでの見え方", icon: "list.bullet.rectangle") {
+                    RecipeBadgeLegend(recipe: recipe, effectiveMode: model.effectiveMode(recipe))
+                }
                 EditorSection(title: "基本情報", icon: "slider.horizontal.3") {
                     basics
                 }
