@@ -376,16 +376,18 @@ struct RecipeRow: View {
             Button {
                 action(NSEvent.modifierFlags.contains(.option))
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: 9) {
                     Text(recipe.name)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    // 「何を渡すか」と「どう送るか」は別の話なので、細い線で分ける。
                     RecipeInputBadges(recipe: recipe, compact: true)
+                    Divider().frame(height: 13)
                     // クリックで何が起きるかは、文字ではなくアイコンで示す。
                     Image(systemName: icon)
                         .font(.body)
                         .foregroundStyle(.secondary)
-                        .frame(width: 20)
+                        .frame(width: 18)
                 }
                 .contentShape(Rectangle())
             }
@@ -404,6 +406,7 @@ struct RecipeRow: View {
             }
             .buttonStyle(.plain)
             .opacity(hovering || isHighlighted ? 1 : 0.25)
+            .padding(.leading, 6)
             .help("入力と送信先を指定して実行 (⌥クリックでも開きます)")
         }
         .padding(.horizontal, 12)

@@ -57,39 +57,51 @@ struct RecipeInputBadges: View {
 
     /// メニューバーでは種類ごとに常に同じ位置を使う。
     /// 空のスロットも確保することで、Recipe ごとに後続の記号が横に動かない。
+    ///
+    /// 5 つを等間隔に並べると、どれが何の話か読み取れない。
+    /// 「何を渡すか（形式）」と「どこから入れるか（入力方法）」で間を空ける。
     private var compactBadges: some View {
-        HStack(spacing: 7) {
-            compactSlot(
-                ArgumentType.string.symbolName,
-                label: ArgumentType.string.displayName,
-                state: argumentTypes.contains(.string)
-                    ? .active
-                    : (recipe.acceptsAdditionalPrompt ? .inactive : .hidden)
-            )
-            compactSlot(
-                ArgumentType.multiline.symbolName,
-                label: ArgumentType.multiline.displayName,
-                state: argumentTypes.contains(.multiline) ? .active : .hidden
-            )
-            compactSlot(
-                ArgumentType.url.symbolName,
-                label: ArgumentType.url.displayName,
-                state: argumentTypes.contains(.url) ? .active : .hidden
-            )
-            compactSlot(
-                "doc.on.clipboard",
-                label: "Clipboard",
-                state: usesClipboard ? .active : .hidden
-            )
-            compactSlot(
-                "rectangle.and.pencil.and.ellipsis",
-                label: recipe.needsUserInput
-                    ? "フォーム入力が必要"
-                    : (canOpenForm ? "フォームで上書き可能（⌥クリック）" : "フォーム入力なし"),
-                state: recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
-            )
+        HStack(spacing: Self.groupSpacing) {
+            HStack(spacing: Self.slotSpacing) {
+                compactSlot(
+                    ArgumentType.string.symbolName,
+                    label: ArgumentType.string.displayName,
+                    state: argumentTypes.contains(.string)
+                        ? .active
+                        : (recipe.acceptsAdditionalPrompt ? .inactive : .hidden)
+                )
+                compactSlot(
+                    ArgumentType.multiline.symbolName,
+                    label: ArgumentType.multiline.displayName,
+                    state: argumentTypes.contains(.multiline) ? .active : .hidden
+                )
+                compactSlot(
+                    ArgumentType.url.symbolName,
+                    label: ArgumentType.url.displayName,
+                    state: argumentTypes.contains(.url) ? .active : .hidden
+                )
+            }
+            HStack(spacing: Self.slotSpacing) {
+                compactSlot(
+                    "doc.on.clipboard",
+                    label: "Clipboard から入れる",
+                    state: usesClipboard ? .active : .hidden
+                )
+                compactSlot(
+                    "rectangle.and.pencil.and.ellipsis",
+                    label: recipe.needsUserInput
+                        ? "フォームで入力する"
+                        : (canOpenForm ? "フォームで上書きできる（⌥クリック）" : "フォーム入力なし"),
+                    state: recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
+                )
+            }
         }
     }
+
+    /// 同じ話の記号どうしの間隔。
+    static let slotSpacing: CGFloat = 5
+    /// 別の話に移るときの間隔。
+    static let groupSpacing: CGFloat = 12
 
     /// 色は 3 段階だけにして、行が騒がしくならないようにする。
     /// 使う = オレンジ / 使えるが今回は使わない = 白 / 対象外 = グレー。
