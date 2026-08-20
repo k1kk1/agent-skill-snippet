@@ -55,7 +55,12 @@ struct RunPreviewView: View {
                                 .disabled(mode.requiresHerdr && !model.connection.isHealthy)
                         }
                     }
-                    Button(preview.mode.displayName) { model.runPreview(preview) }
+                    Button {
+                        model.runPreview(preview)
+                    } label: {
+                        // 一覧から消した記号は、この実行ボタンに集約する。
+                        Label(preview.mode.displayName, systemImage: preview.mode.symbolName)
+                    }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                         .disabled(hasMissingInput(preview))

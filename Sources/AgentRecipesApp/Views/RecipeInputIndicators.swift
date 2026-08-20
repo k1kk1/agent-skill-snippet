@@ -63,11 +63,6 @@ struct RecipeBadges {
 
     var usesClipboard: Bool { !clipboardArguments.isEmpty || templateUsesClipboard }
 
-    /// ⌥クリック・右クリックでフォームを開き、既定値や Clipboard の値を上書きできるか。
-    var canOpenForm: Bool {
-        !recipe.arguments.isEmpty || recipe.target.askProject
-    }
-
     var items: [Item] {
         [
             formatItem(.string),
@@ -75,7 +70,6 @@ struct RecipeBadges {
             formatItem(.url),
             formatItem(.choice),
             clipboardItem,
-            formItem,
         ]
     }
 
@@ -137,28 +131,6 @@ struct RecipeBadges {
         )
     }
 
-    private var formItem: Item {
-        let state: State = recipe.needsUserInput ? .active : (canOpenForm ? .inactive : .hidden)
-        let detail: String
-        switch state {
-        case .active:
-            detail = recipe.target.askProject && !recipe.arguments.contains(where: \.needsTypedValue)
-                ? "「実行方法」で送信先を毎回選ぶ設定になっている"
-                : "既定値も Clipboard も無い引数があるので、実行前に入力する"
-        case .inactive:
-            detail = "⌥クリック・右クリックで値を上書きできる"
-        case .hidden:
-            detail = "入力する項目がない"
-        }
-        return Item(
-            id: "form",
-            symbol: "rectangle.and.pencil.and.ellipsis",
-            title: "フォームで入力する",
-            state: state,
-            detail: detail,
-            group: .input
-        )
-    }
 }
 
 /// Recipe が必要とする入力と、その取得元をコンパクトに示す共通表示。
@@ -201,7 +173,6 @@ struct RecipeInputBadges: View {
         let active = badges.items(in: .format).filter { $0.state == .active }
         if !active.isEmpty { parts.append("形式: " + active.map(\.title).joined(separator: "、")) }
         if badges.usesClipboard { parts.append("Clipboard を使用") }
-        if recipe.needsUserInput { parts.append("フォーム入力あり") }
         return parts.joined(separator: "。")
     }
 }

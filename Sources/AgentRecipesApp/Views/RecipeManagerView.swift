@@ -63,7 +63,7 @@ struct RecipeManagerView: View {
                 if !favorites.isEmpty {
                     Section("Favorites") {
                         ForEach(favorites) { recipe in
-                            ManagerRecipeRow(recipe: recipe)
+                            ManagerRecipeRow(recipe: recipe, isRunning: model.isRunning(recipe))
                                 .tag(SidebarItem.recipe(recipe.id))
                         }
                     }
@@ -79,7 +79,7 @@ struct RecipeManagerView: View {
                 ForEach(groupedCategories, id: \.self) { category in
                     Section(category.isEmpty ? "Other" : category) {
                         ForEach(recipes(in: category)) { recipe in
-                            ManagerRecipeRow(recipe: recipe)
+                            ManagerRecipeRow(recipe: recipe, isRunning: model.isRunning(recipe))
                                 .tag(SidebarItem.recipe(recipe.id))
                         }
                     }
@@ -305,23 +305,25 @@ struct RecipeManagerView: View {
 
 private struct ManagerRecipeRow: View {
     let recipe: Recipe
-
-    private var modeIcon: String {
-        switch recipe.mode {
-        case .copy: "doc.on.doc"
-        case .paste: "text.cursor"
-        case .submit: "paperplane.fill"
-        }
-    }
+    /// 実行中。行にローディングを出す。
+    var isRunning = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // Skill から作った Recipe は、カテゴリに並んでも由来が分かるようにする。
-            Image(systemName: recipe.skill == nil ? modeIcon : "sparkles")
-                .font(.caption)
-                .foregroundStyle(recipe.skill == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
-                .frame(width: 14)
-                .help(recipe.skill.map { "Agent Skill: \($0.displayName)" } ?? recipe.mode.explanation)
+            if isRunning {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.7)
+                    .frame(width: 14)
+            } else {
+                // Skill から作った Recipe は、カテゴリに並んでも由来が分かるようにする。
+                // 送信方法の記号 (紙飛行機) は実行ボタンだけで使う。
+                Image(systemName: recipe.skill == nil ? "doc.text" : "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(recipe.skill == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                    .frame(width: 14)
+                    .help(recipe.skill.map { "Agent Skill: \($0.displayName)" } ?? recipe.mode.explanation)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(recipe.name)
                     .lineLimit(1)
@@ -445,14 +447,18 @@ struct RecipeEditorView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(recipe.name.isEmpty ? "名称未設定の Recipe" : recipe.name)
                     .font(.title2.weight(.semibold))
-                Button {
-                    model.activate(recipe)
-                } label: {
-                    Image(systemName: "play.fill")
-                        .foregroundStyle(.tint)
+                if model.isRunning(recipe) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button {
+                        model.activate(recipe)
+                    } label: {
+                        Image(systemName: model.effectiveMode(recipe).symbolName)
+                            .foregroundStyle(.tint)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(model.effectiveMode(recipe).displayName)
                 }
-                .buttonStyle(.borderless)
-                .help("実行")
                 Button {
                     model.showFormPreview(recipe)
                 } label: {
@@ -950,11 +956,6 @@ struct RecipeEditorView: View {
                                 state: argument.useClipboardAsDefault ? .active : .hidden
                             )
                             .help("Clipboard を既定値にすると、一覧の Clipboard の記号が点く")
-                            BadgeStateIcon(
-                                symbol: "rectangle.and.pencil.and.ellipsis",
-                                state: argument.needsTypedValue ? .active : .hidden
-                            )
-                            .help("既定値も Clipboard も無いので、実行前の入力が要る")
                         }
                         Spacer()
                         Button(role: .destructive) {

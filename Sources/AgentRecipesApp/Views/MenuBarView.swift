@@ -302,7 +302,8 @@ struct MenuBarView: View {
         RecipeRow(
             recipe: recipe,
             effectiveMode: model.effectiveMode(recipe),
-            isHighlighted: highlightedID == recipe.id
+            isHighlighted: highlightedID == recipe.id,
+            isRunning: model.isRunning(recipe)
         ) { forceForm in
             dismiss()
             model.activate(recipe, forceForm: forceForm)
@@ -360,13 +361,15 @@ struct MenuBarView: View {
     }
 }
 
-/// Recipe 1 行。⌥ クリックで入力・Preview を強制表示する。
+/// Recipe 1 行。クリックで実行し、⌥ クリック・右クリックで詳細を指定する。
 struct RecipeRow: View {
     let recipe: Recipe
     /// クリックしたときに実際に起きること。
     let effectiveMode: ExecutionMode
     /// ↑↓ で選ばれている行。
     var isHighlighted = false
+    /// 実行中。結果が返るまでローディングを出す。
+    var isRunning = false
     let action: (_ forceForm: Bool) -> Void
 
     @State private var hovering = false
@@ -379,14 +382,15 @@ struct RecipeRow: View {
                 Text(recipe.name)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                // 「何を渡すか」と「どう送るか」は別の話なので、細い線で分ける。
-                RecipeInputBadges(recipe: recipe)
-                Divider().frame(height: 13)
-                // クリックで何が起きるかは、文字ではなくアイコンで示す。
-                Image(systemName: effectiveMode.symbolName)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
+                // 記号と「クリックで何が起きるか」は同じ場所を使う。
+                // 常に両方出すと行が混み、入れ替えれば他の行もずれない。
+                ZStack(alignment: .trailing) {
+                    RecipeInputBadges(recipe: recipe)
+                        .opacity(showsAction ? 0 : 1)
+                    if showsAction {
+                        trailingAccessory
+                    }
+                }
             }
             .contentShape(Rectangle())
             .padding(.horizontal, 12)
@@ -404,11 +408,29 @@ struct RecipeRow: View {
         .help("\(recipe.description ?? recipe.name)\n\(effectiveMode.explanation)\n⌥クリックまたは右クリックで詳細を指定")
     }
 
+    /// 記号の代わりに出すもの。実行中が最優先。
+    private var showsAction: Bool { isRunning || hovering || isHighlighted }
+
+    @ViewBuilder
+    private var trailingAccessory: some View {
+        HStack(spacing: 5) {
+            if isRunning {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text("実行中")
+            } else {
+                Text(effectiveMode.displayName)
+                Image(systemName: "return")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
     private var background: Color {
         if isHighlighted { return Color.accentColor.opacity(0.25) }
         return hovering ? Color.accentColor.opacity(0.15) : .clear
     }
-
 }
 
 struct MenuRowButton: View {

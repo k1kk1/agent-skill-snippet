@@ -76,6 +76,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// この Recipe を今走らせているか。一覧と編集画面にローディングを出す。
+    func isRunning(_ recipe: Recipe) -> Bool {
+        activeRun?.recipeID == recipe.id || pendingResults.contains { $0.recipeID == recipe.id }
+    }
+
     /// 利用者が答えないと先に進まない結果があるか。メニューバーのバッジに使う。
     var needsAttention: Bool {
         results.contains { $0.pendingPrompt != nil || $0.question != nil }
@@ -348,11 +353,15 @@ final class AppModel: ObservableObject {
             ? settings.resultTimeoutSeconds * 1000
             : nil
         let pendingID = waitMS.map { _ in UUID() }
-        if let pendingID { pendingResults.append(PendingResult(id: pendingID, recipeName: recipe.name)) }
+        if let pendingID {
+            pendingResults.append(
+                PendingResult(id: pendingID, recipeID: recipe.id, recipeName: recipe.name)
+            )
+        }
 
         // 実行中であることを見せる。Submit は待ち時間が長いので特に必要。
         if mode.requiresHerdr {
-            activeRun = ActiveRun(recipeName: recipe.name, mode: mode)
+            activeRun = ActiveRun(recipeID: recipe.id, recipeName: recipe.name, mode: mode)
             PanelPresenter.shared.showResult(model: self)
         }
         let onStage: @Sendable (RunStage) -> Void = { stage in
@@ -841,6 +850,7 @@ final class AppModel: ObservableObject {
 
 struct PendingResult: Identifiable, Equatable {
     let id: UUID
+    let recipeID: Recipe.ID
     let recipeName: String
 }
 
@@ -874,6 +884,8 @@ private enum HerdrBackground {
 /// 実行中の Recipe。
 struct ActiveRun: Identifiable {
     let id = UUID()
+    /// どの Recipe を走らせているか。一覧の行にローディングを出すために持つ。
+    var recipeID: Recipe.ID
     var recipeName: String
     var mode: ExecutionMode
     var stage: RunStage = .buildingPrompt
