@@ -88,8 +88,9 @@ public struct PromptBuilder: Sendable {
             sections.append("この作業では `\(skill.name)` スキルを使用し、その SKILL.md の指示に従ってください。")
         }
         sections.append(rendered)
+        // 補足は実行前の確認画面に常駐しているので、Recipe 側の可否は見ない。
         let supplemental = additionalPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if recipe.acceptsAdditionalPrompt, !supplemental.isEmpty {
+        if !supplemental.isEmpty {
             sections.append("追加の指示:\n\(supplemental)")
         }
         if recipe.resultFormat == .rich {

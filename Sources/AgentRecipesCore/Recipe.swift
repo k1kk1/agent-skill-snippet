@@ -22,8 +22,7 @@ public enum ArgumentType: String, Codable, CaseIterable, Sendable {
     public var symbolName: String {
         switch self {
         case .url: return "link"
-        // text.cursor は「補足プロンプト」の記号に使うので、こちらは書式の記号にする。
-        case .string: return "textformat"
+        case .string: return "text.cursor"
         case .multiline: return "text.alignleft"
         case .choice: return "list.bullet.circle"
         }
@@ -328,8 +327,6 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
     /// rich指定時は構造化結果の出力契約をPromptに追加する。
     public var resultFormat: ResultFormat
     public var arguments: [ArgumentSpec]
-    /// Skill が任意の補足プロンプトを受け付けるか。明示的な引数とは別の、任意の文脈・指示用。
-    public var acceptsAdditionalPrompt: Bool
     public var mode: ExecutionMode
     public var target: TargetSpec
 
@@ -347,7 +344,6 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         skill: SkillReference? = nil,
         resultFormat: ResultFormat = .plain,
         arguments: [ArgumentSpec] = [],
-        acceptsAdditionalPrompt: Bool = false,
         mode: ExecutionMode = .submit,
         target: TargetSpec = TargetSpec(),
         body: String = ""
@@ -363,7 +359,6 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         self.skill = skill
         self.resultFormat = resultFormat
         self.arguments = arguments
-        self.acceptsAdditionalPrompt = acceptsAdditionalPrompt
         self.mode = mode
         self.target = target
         self.body = body
@@ -371,7 +366,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, description, category, tags, favorite
-        case prompt, skill, resultFormat, arguments, acceptsAdditionalPrompt, mode, target
+        case prompt, skill, resultFormat, arguments, mode, target
     }
 
     public init(from decoder: Decoder) throws {
@@ -387,7 +382,6 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
         skill = try c.decodeIfPresent(SkillReference.self, forKey: .skill)
         resultFormat = try c.decodeIfPresent(ResultFormat.self, forKey: .resultFormat) ?? .plain
         arguments = try c.decodeIfPresent([ArgumentSpec].self, forKey: .arguments) ?? []
-        acceptsAdditionalPrompt = try c.decodeIfPresent(Bool.self, forKey: .acceptsAdditionalPrompt) ?? false
         mode = try c.decodeIfPresent(ExecutionMode.self, forKey: .mode) ?? .submit
         target = try c.decodeIfPresent(TargetSpec.self, forKey: .target) ?? TargetSpec()
         body = ""

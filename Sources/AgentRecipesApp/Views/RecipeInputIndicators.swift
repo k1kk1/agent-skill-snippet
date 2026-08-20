@@ -65,17 +65,11 @@ struct RecipeBadges {
 
     /// ⌥クリック・右クリックでフォームを開き、既定値や Clipboard の値を上書きできるか。
     var canOpenForm: Bool {
-        !recipe.arguments.isEmpty
-            || recipe.acceptsAdditionalPrompt
-            || recipe.target.askProject
+        !recipe.arguments.isEmpty || recipe.target.askProject
     }
-
-    /// 補足プロンプトの記号の id。
-    static let additionalPromptID = "additionalPrompt"
 
     var items: [Item] {
         [
-            additionalPromptItem,
             formatItem(.string),
             formatItem(.multiline),
             formatItem(.url),
@@ -94,29 +88,21 @@ struct RecipeBadges {
         items.first { $0.id == id }?.state ?? .hidden
     }
 
-    /// 引数とは別に渡せる自由テキスト。記号は「あ|」。
-    private var additionalPromptItem: Item {
-        Item(
-            id: Self.additionalPromptID,
-            symbol: "text.cursor",
-            title: "補足プロンプト",
-            state: recipe.acceptsAdditionalPrompt ? .active : .hidden,
-            detail: recipe.acceptsAdditionalPrompt
-                ? "「引数」の『補足プロンプトを受け付ける』がオン"
-                : "補足プロンプトは受け付けない",
-            group: .format
-        )
-    }
-
     private func formatItem(_ type: ArgumentType) -> Item {
-        let matching = arguments(ofType: type)
+        // Clipboard から入る引数は Clipboard の記号だけを点ける。
+        // 「打ち込む形式」と「Clipboard から入れる」は排他にしないと、
+        // どちらの話なのか読み取れない。
+        let matching = arguments(ofType: type).filter { !$0.useClipboardAsDefault }
+        let fromClipboard = arguments(ofType: type).filter(\.useClipboardAsDefault)
         return Item(
             id: type.rawValue,
             symbol: type.symbolName,
             title: title(for: type),
             state: matching.isEmpty ? .hidden : .active,
             detail: matching.isEmpty
-                ? "この形式の引数はない"
+                ? (fromClipboard.isEmpty
+                    ? "この形式の引数はない"
+                    : "この形式の引数は Clipboard から入れる")
                 : "「引数」の " + matching.map(\.name).joined(separator: ", "),
             group: .format
         )
@@ -212,12 +198,10 @@ struct RecipeInputBadges: View {
     private var accessibilityText: String {
         var parts: [String] = []
         parts.append(recipe.arguments.isEmpty ? "入力なし" : "引数 \(recipe.arguments.count) 件")
-        let active = badges.items(in: .format)
-            .filter { $0.state == .active && $0.id != RecipeBadges.additionalPromptID }
+        let active = badges.items(in: .format).filter { $0.state == .active }
         if !active.isEmpty { parts.append("形式: " + active.map(\.title).joined(separator: "、")) }
         if badges.usesClipboard { parts.append("Clipboard を使用") }
         if recipe.needsUserInput { parts.append("フォーム入力あり") }
-        if recipe.acceptsAdditionalPrompt { parts.append("補足プロンプトを受け付ける") }
         return parts.joined(separator: "。")
     }
 }

@@ -852,22 +852,6 @@ struct RecipeEditorView: View {
                 Text("引数なし (選択すると即実行されます)").font(.caption).foregroundStyle(.secondary)
             }
 
-            Toggle(isOn: $recipe.acceptsAdditionalPrompt) {
-                HStack(spacing: 6) {
-                    // 一覧の「補足プロンプト」の記号そのもの。オンにすると一覧も同時に点く。
-                    BadgeStateIcon(
-                        symbol: "text.cursor",
-                        state: RecipeBadges(recipe: recipe).state(of: RecipeBadges.additionalPromptID)
-                    )
-                    .help(recipe.acceptsAdditionalPrompt
-                          ? "一覧の補足プロンプトの記号が点く"
-                          : "オンにすると、一覧の補足プロンプトの記号が点く")
-                    Text("補足プロンプトを受け付ける")
-                }
-            }
-            Text("明示した引数とは別に、Skill が判断材料として使える任意のテキストを渡せます。")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
 
             ForEach($recipe.arguments) { $argument in
                 GroupBox {
@@ -953,8 +937,14 @@ struct RecipeEditorView: View {
                         Text(argument.displayLabel.isEmpty ? argument.name : argument.displayLabel)
                         // この引数が一覧のどの記号を点けているか。
                         HStack(spacing: RecipeInputBadges.slotSpacing) {
-                            BadgeStateIcon(symbol: argument.type.symbolName, state: .active)
-                                .help("一覧では \(argument.type.displayName) の記号が点く")
+                            // Clipboard から入れる引数は、形式ではなく Clipboard の記号が点く。
+                            BadgeStateIcon(
+                                symbol: argument.type.symbolName,
+                                state: argument.useClipboardAsDefault ? .hidden : .active
+                            )
+                            .help(argument.useClipboardAsDefault
+                                  ? "Clipboard から入れるので、形式の記号は点かない"
+                                  : "一覧では \(argument.type.displayName) の記号が点く")
                             BadgeStateIcon(
                                 symbol: "doc.on.clipboard",
                                 state: argument.useClipboardAsDefault ? .active : .hidden

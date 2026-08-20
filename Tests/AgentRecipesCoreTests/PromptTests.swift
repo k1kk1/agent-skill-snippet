@@ -152,19 +152,18 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertEqual(prompt, "hello")
     }
 
-    func testAdditionalPromptIsIncludedOnlyWhenRecipeAcceptsIt() throws {
-        let enabled = Recipe(
-            id: "enabled", name: "Enabled", acceptsAdditionalPrompt: true, body: "基本の指示"
-        )
-        let disabled = Recipe(id: "disabled", name: "Disabled", body: "基本の指示")
+    /// 補足は確認画面に常駐しているので、Recipe 側の可否では分けない。
+    func testAdditionalPromptIsAppendedWhenPresent() throws {
+        let recipe = Recipe(id: "recipe", name: "Recipe", body: "基本の指示")
         let builder = PromptBuilder(clipboard: FakeClipboard())
 
         XCTAssertEqual(
-            try builder.build(recipe: enabled, userValues: [:], project: nil, additionalPrompt: "優先度を高く"),
+            try builder.build(recipe: recipe, userValues: [:], project: nil, additionalPrompt: "優先度を高く"),
             "基本の指示\n\n追加の指示:\n優先度を高く"
         )
+        // 空白だけの補足は足さない。
         XCTAssertEqual(
-            try builder.build(recipe: disabled, userValues: [:], project: nil, additionalPrompt: "混入してはいけない"),
+            try builder.build(recipe: recipe, userValues: [:], project: nil, additionalPrompt: "   "),
             "基本の指示"
         )
     }

@@ -100,40 +100,37 @@ struct RunPreviewView: View {
     }
 
     /// 引数の入力。通常は選択式だけ、⌥ クリックなどの詳細表示ではすべて出す。
-    @ViewBuilder
+    /// 補足はいつでも書ける。
     private func inputs(_ preview: RunPreview) -> some View {
-        let arguments = preview.editableArguments
-        if !arguments.isEmpty || (preview.showsDetails && preview.recipe.acceptsAdditionalPrompt) {
-            SectionBox(title: "入力", systemImage: "slider.horizontal.3") {
-                ForEach(arguments) { argument in
-                    LabeledContent {
-                        ArgumentField(
-                            argument: argument,
-                            value: Binding(
-                                get: { model.previewRequest?.values[argument.name] ?? "" },
-                                set: { model.previewRequest?.values[argument.name] = $0 }
-                            )
+        SectionBox(title: "入力", systemImage: "slider.horizontal.3") {
+            ForEach(preview.editableArguments) { argument in
+                LabeledContent {
+                    ArgumentField(
+                        argument: argument,
+                        value: Binding(
+                            get: { model.previewRequest?.values[argument.name] ?? "" },
+                            set: { model.previewRequest?.values[argument.name] = $0 }
                         )
-                    } label: {
-                        HStack(spacing: 2) {
-                            Text(argument.displayLabel)
-                            if argument.required {
-                                Text("*").foregroundStyle(.red)
-                            }
+                    )
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(argument.displayLabel)
+                        if argument.required {
+                            Text("*").foregroundStyle(.red)
                         }
                     }
                 }
-                if preview.showsDetails, preview.recipe.acceptsAdditionalPrompt {
-                    LabeledContent("補足") {
-                        TextEditor(text: Binding(
-                            get: { model.previewRequest?.additionalPrompt ?? "" },
-                            set: { model.previewRequest?.additionalPrompt = $0 }
-                        ))
-                        .font(.system(.callout, design: .monospaced))
-                        .frame(height: 60)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
-                    }
-                }
+            }
+            // Recipe ごとの設定にすると、⌥ クリックを知らない限り一度も使えないままになる。
+            // 送る前にひとこと足せる場所として、この画面に常駐させる。
+            LabeledContent("補足") {
+                TextEditor(text: Binding(
+                    get: { model.previewRequest?.additionalPrompt ?? "" },
+                    set: { model.previewRequest?.additionalPrompt = $0 }
+                ))
+                .font(.system(.callout, design: .monospaced))
+                .frame(height: 60)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
             }
         }
     }
