@@ -372,47 +372,36 @@ struct RecipeRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button {
-                action(NSEvent.modifierFlags.contains(.option))
-            } label: {
-                HStack(spacing: 9) {
-                    Text(recipe.name)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    // 「何を渡すか」と「どう送るか」は別の話なので、細い線で分ける。
-                    RecipeInputBadges(recipe: recipe, compact: true)
-                    Divider().frame(height: 13)
-                    // クリックで何が起きるかは、文字ではなくアイコンで示す。
-                    Image(systemName: icon)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("\(recipe.description ?? recipe.name)\n\(effectiveMode.explanation)")
-
-            // ⌥ クリックの入口は、見えていないと気づけない。
-            Button {
-                action(true)
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.caption)
+        Button {
+            action(NSEvent.modifierFlags.contains(.option))
+        } label: {
+            HStack(spacing: 9) {
+                Text(recipe.name)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // 「何を渡すか」と「どう送るか」は別の話なので、細い線で分ける。
+                RecipeInputBadges(recipe: recipe, compact: true)
+                Divider().frame(height: 13)
+                // クリックで何が起きるかは、文字ではなくアイコンで示す。
+                Image(systemName: icon)
+                    .font(.body)
                     .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 18)
-                    .contentShape(Rectangle())
+                    .frame(width: 18)
             }
-            .buttonStyle(.plain)
-            .opacity(hovering || isHighlighted ? 1 : 0.25)
-            .padding(.leading, 6)
-            .help("入力と送信先を指定して実行 (⌥クリックでも開きます)")
+            .contentShape(Rectangle())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(background)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(background)
+        .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        // 詳細の入口はボタンを増やさず、⌥ クリックと右クリックに寄せる。
+        .contextMenu {
+            // 1 行目はクリックしたときと同じ動き。
+            Button(effectiveMode.displayName) { action(false) }
+            Button("入力と送信先を指定して実行...") { action(true) }
+        }
+        .help("\(recipe.description ?? recipe.name)\n\(effectiveMode.explanation)\n⌥クリックまたは右クリックで詳細を指定")
     }
 
     private var background: Color {
