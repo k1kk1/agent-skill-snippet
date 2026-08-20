@@ -85,6 +85,11 @@ struct RecipeBadges {
         items.filter { $0.group == group }
     }
 
+    /// 記号 1 つ分の状態。編集画面の設定の隣に、同じ状態で出すために使う。
+    func state(of id: String) -> State {
+        items.first { $0.id == id }?.state ?? .hidden
+    }
+
     private func formatItem(_ type: ArgumentType) -> Item {
         let matching = arguments(ofType: type)
         // 文字列だけは、補足プロンプトを受け付ける Recipe でも「使える」扱いにする。
