@@ -22,7 +22,8 @@ public enum ArgumentType: String, Codable, CaseIterable, Sendable {
     public var symbolName: String {
         switch self {
         case .url: return "link"
-        case .string: return "text.cursor"
+        // text.cursor は「補足プロンプト」の記号に使うので、こちらは書式の記号にする。
+        case .string: return "textformat"
         case .multiline: return "text.alignleft"
         case .choice: return "list.bullet.circle"
         }

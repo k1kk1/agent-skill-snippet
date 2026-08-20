@@ -70,8 +70,12 @@ struct RecipeBadges {
             || recipe.target.askProject
     }
 
+    /// 補足プロンプトの記号の id。
+    static let additionalPromptID = "additionalPrompt"
+
     var items: [Item] {
         [
+            additionalPromptItem,
             formatItem(.string),
             formatItem(.multiline),
             formatItem(.url),
@@ -90,17 +94,29 @@ struct RecipeBadges {
         items.first { $0.id == id }?.state ?? .hidden
     }
 
+    /// 引数とは別に渡せる自由テキスト。記号は「あ|」。
+    private var additionalPromptItem: Item {
+        Item(
+            id: Self.additionalPromptID,
+            symbol: "text.cursor",
+            title: "補足プロンプト",
+            state: recipe.acceptsAdditionalPrompt ? .active : .hidden,
+            detail: recipe.acceptsAdditionalPrompt
+                ? "「引数」の『補足プロンプトを受け付ける』がオン"
+                : "補足プロンプトは受け付けない",
+            group: .format
+        )
+    }
+
     private func formatItem(_ type: ArgumentType) -> Item {
         let matching = arguments(ofType: type)
-        // 文字列だけは、補足プロンプトを受け付ける Recipe でも「使える」扱いにする。
-        let acceptsFreeText = type == .string && recipe.acceptsAdditionalPrompt
         return Item(
             id: type.rawValue,
             symbol: type.symbolName,
             title: title(for: type),
-            state: matching.isEmpty ? (acceptsFreeText ? .inactive : .hidden) : .active,
+            state: matching.isEmpty ? .hidden : .active,
             detail: matching.isEmpty
-                ? (acceptsFreeText ? "補足プロンプトを受け付ける" : "この形式の引数はない")
+                ? "この形式の引数はない"
                 : "「引数」の " + matching.map(\.name).joined(separator: ", "),
             group: .format
         )
@@ -196,7 +212,8 @@ struct RecipeInputBadges: View {
     private var accessibilityText: String {
         var parts: [String] = []
         parts.append(recipe.arguments.isEmpty ? "入力なし" : "引数 \(recipe.arguments.count) 件")
-        let active = badges.items(in: .format).filter { $0.state == .active }
+        let active = badges.items(in: .format)
+            .filter { $0.state == .active && $0.id != RecipeBadges.additionalPromptID }
         if !active.isEmpty { parts.append("形式: " + active.map(\.title).joined(separator: "、")) }
         if badges.usesClipboard { parts.append("Clipboard を使用") }
         if recipe.needsUserInput { parts.append("フォーム入力あり") }

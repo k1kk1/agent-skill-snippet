@@ -854,14 +854,14 @@ struct RecipeEditorView: View {
 
             Toggle(isOn: $recipe.acceptsAdditionalPrompt) {
                 HStack(spacing: 6) {
-                    // 一覧の「文字列」の記号そのもの。オンにすると、ここも一覧も同時に点く。
+                    // 一覧の「補足プロンプト」の記号そのもの。オンにすると一覧も同時に点く。
                     BadgeStateIcon(
-                        symbol: ArgumentType.string.symbolName,
-                        state: RecipeBadges(recipe: recipe).state(of: ArgumentType.string.rawValue)
+                        symbol: "text.cursor",
+                        state: RecipeBadges(recipe: recipe).state(of: RecipeBadges.additionalPromptID)
                     )
                     .help(recipe.acceptsAdditionalPrompt
-                          ? "一覧の文字列の記号が点く"
-                          : "オンにすると、一覧の文字列の記号が点く")
+                          ? "一覧の補足プロンプトの記号が点く"
+                          : "オンにすると、一覧の補足プロンプトの記号が点く")
                     Text("補足プロンプトを受け付ける")
                 }
             }
