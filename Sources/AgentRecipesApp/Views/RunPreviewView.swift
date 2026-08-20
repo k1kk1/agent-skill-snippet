@@ -92,7 +92,7 @@ struct RunPreviewView: View {
                     .background(Color.accentColor.opacity(0.18), in: Capsule())
             }
             // ボタンと紛らわしくならないよう、モードは控えめなラベルで出す。
-            Label(preview.mode.displayName, systemImage: preview.mode.editorIcon)
+            Label(preview.mode.displayName, systemImage: preview.mode.symbolName)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)

@@ -416,10 +416,6 @@ struct RecipeEditorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metrics.sectionSpacing) {
                 editorHeader
-                // 一覧の行に並ぶ記号が、どの設定のことなのかを突き合わせられるようにする。
-                EditorSection(title: "メニューでの見え方", icon: "list.bullet.rectangle") {
-                    RecipeBadgeLegend(recipe: recipe, effectiveMode: model.effectiveMode(recipe))
-                }
                 EditorSection(title: "基本情報", icon: "slider.horizontal.3") {
                     basics
                 }
@@ -483,6 +479,17 @@ struct RecipeEditorView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            // 一覧の行に出るのと同じ並び。設定を変えると、ここも同時に変わる。
+            HStack(spacing: RecipeInputBadges.groupSpacing) {
+                RecipeInputBadges(recipe: recipe)
+                Divider().frame(height: 13)
+                Image(systemName: model.effectiveMode(recipe).symbolName)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+            }
+            .padding(.top, 2)
+            .help("メニューの一覧に出る表示")
         }
     }
 
@@ -553,7 +560,7 @@ struct RecipeEditorView: View {
                     Button {
                         recipe.mode = mode
                     } label: {
-                        Label(mode.editorDisplayName, systemImage: mode.editorIcon)
+                        Label(mode.editorDisplayName, systemImage: mode.symbolName)
                             .labelStyle(.titleAndIcon)
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity)
@@ -845,7 +852,15 @@ struct RecipeEditorView: View {
                 Text("引数なし (選択すると即実行されます)").font(.caption).foregroundStyle(.secondary)
             }
 
-            Toggle("補足プロンプトを受け付ける", isOn: $recipe.acceptsAdditionalPrompt)
+            Toggle(isOn: $recipe.acceptsAdditionalPrompt) {
+                HStack(spacing: 6) {
+                    BadgeStateIcon(
+                        symbol: ArgumentType.string.symbolName,
+                        state: recipe.acceptsAdditionalPrompt ? .inactive : .hidden
+                    )
+                    Text("補足プロンプトを受け付ける")
+                }
+            }
             Text("明示した引数とは別に、Skill が判断材料として使える任意のテキストを渡せます。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -874,14 +889,23 @@ struct RecipeEditorView: View {
                             HStack(spacing: Metrics.itemSpacing) {
                                 Picker("", selection: $argument.type) {
                                     ForEach(ArgumentType.allCases, id: \.self) { type in
-                                        Text(type.displayName).tag(type)
+                                        Label(type.displayName, systemImage: type.symbolName)
+                                            .tag(type)
                                     }
                                 }
                                 .labelsHidden()
                                 .frame(width: 120)
                                 Toggle("必須", isOn: $argument.required)
-                                Toggle("Clipboard を既定値に", isOn: $argument.useClipboardAsDefault)
-                                    .disabled(argument.type == .choice)
+                                Toggle(isOn: $argument.useClipboardAsDefault) {
+                                    HStack(spacing: 6) {
+                                        BadgeStateIcon(
+                                            symbol: "doc.on.clipboard",
+                                            state: argument.useClipboardAsDefault ? .active : .hidden
+                                        )
+                                        Text("Clipboard を既定値に")
+                                    }
+                                }
+                                .disabled(argument.type == .choice)
                                 Spacer(minLength: 0)
                             }
                         }
@@ -921,8 +945,23 @@ struct RecipeEditorView: View {
                     }
                     .padding(.top, 2)
                 } label: {
-                    HStack {
+                    HStack(spacing: 8) {
                         Text(argument.displayLabel.isEmpty ? argument.name : argument.displayLabel)
+                        // この引数が一覧のどの記号を点けているか。
+                        HStack(spacing: RecipeInputBadges.slotSpacing) {
+                            BadgeStateIcon(symbol: argument.type.symbolName, state: .active)
+                                .help("一覧では \(argument.type.displayName) の記号が点く")
+                            BadgeStateIcon(
+                                symbol: "doc.on.clipboard",
+                                state: argument.useClipboardAsDefault ? .active : .hidden
+                            )
+                            .help("Clipboard を既定値にすると、一覧の Clipboard の記号が点く")
+                            BadgeStateIcon(
+                                symbol: "rectangle.and.pencil.and.ellipsis",
+                                state: argument.needsTypedValue ? .active : .hidden
+                            )
+                            .help("既定値も Clipboard も無いので、実行前の入力が要る")
+                        }
                         Spacer()
                         Button(role: .destructive) {
                             recipe.arguments.removeAll { $0.id == argument.id }

@@ -61,6 +61,14 @@ public struct ArgumentSpec: Codable, Hashable, Identifiable, Sendable {
     /// 複数選べるようにする。値は「A, B」のように連結して渡す。
     public var allowsMultiple: Bool
 
+    /// 実行前に打ち込む必要がある引数か (既定値も Clipboard も無い)。
+    /// 一覧の「フォームで入力する」記号が点くのはこの条件。
+    public var needsTypedValue: Bool {
+        if useClipboardAsDefault { return false }
+        if let defaultValue, !defaultValue.isEmpty { return false }
+        return true
+    }
+
     public var displayLabel: String { label ?? name }
 
     /// 空白を落とし、重複を除いた選択肢。
@@ -165,14 +173,6 @@ public enum ExecutionMode: String, Codable, CaseIterable, Sendable {
         case .copy: return "doc.on.clipboard"
         case .paste: return "text.insert"
         case .submit: return "paperplane"
-        }
-    }
-
-    public var editorIcon: String {
-        switch self {
-        case .copy: return "doc.on.doc"
-        case .paste: return "text.cursor"
-        case .submit: return "play.fill"
         }
     }
 
@@ -399,12 +399,7 @@ public struct Recipe: Codable, Identifiable, Hashable, Sendable {
     /// 実行前にユーザーへ何か聞く必要があるか。
     /// 無ければメニューから選んだ瞬間に実行できる。
     public var needsUserInput: Bool {
-        let needsArgument = arguments.contains { arg in
-            if arg.useClipboardAsDefault { return false }
-            if let d = arg.defaultValue, !d.isEmpty { return false }
-            return true
-        }
-        return needsArgument || target.askProject
+        arguments.contains(where: \.needsTypedValue) || target.askProject
     }
 
     public func matches(_ query: String) -> Bool {

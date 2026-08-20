@@ -135,7 +135,7 @@ struct RecipeBadges {
         let detail: String
         switch state {
         case .active:
-            detail = recipe.target.askProject && !recipe.needsTypedArgument
+            detail = recipe.target.askProject && !recipe.arguments.contains(where: \.needsTypedValue)
                 ? "「実行方法」で送信先を毎回選ぶ設定になっている"
                 : "既定値も Clipboard も無い引数があるので、実行前に入力する"
         case .inactive:
@@ -151,17 +151,6 @@ struct RecipeBadges {
             detail: detail,
             group: .input
         )
-    }
-}
-
-private extension Recipe {
-    /// 実行前に打ち込む必要がある引数を持つか。
-    var needsTypedArgument: Bool {
-        arguments.contains { argument in
-            if argument.useClipboardAsDefault { return false }
-            if let value = argument.defaultValue, !value.isEmpty { return false }
-            return true
-        }
     }
 }
 
@@ -187,7 +176,9 @@ struct RecipeInputBadges: View {
                     ForEach(badges.items(in: group)) { item in
                         RecipeBadgeIcon(item: item, size: 13)
                             .frame(width: 15, height: 17)
-                            .help(item.title)
+                            // 何の話か・なぜそうなっているかは、説明を並べずに
+                            // ツールチップで読めるようにする。
+                            .help("\(item.title)\n\(item.detail)")
                             .accessibilityHidden(true)
                     }
                 }
@@ -230,72 +221,17 @@ struct RecipeBadgeIcon: View {
     }
 }
 
-/// 編集画面に出す凡例。メニューの行に並ぶ記号と、この Recipe の設定を突き合わせる。
-struct RecipeBadgeLegend: View {
-    let recipe: Recipe
-    /// クリックしたときに実際に起きること。
-    let effectiveMode: ExecutionMode
-
-    private var badges: RecipeBadges { RecipeBadges(recipe: recipe) }
+/// 設定と一覧の記号を結びつけるための印。
+/// 編集画面の各設定の隣に、同じ記号・同じ 3 色で出す。
+struct BadgeStateIcon: View {
+    let symbol: String
+    let state: RecipeBadges.State
+    var size: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metrics.itemSpacing) {
-            // メニューに出るのと同じ並び。
-            HStack(spacing: RecipeInputBadges.groupSpacing) {
-                RecipeInputBadges(recipe: recipe)
-                Divider().frame(height: 13)
-                Image(systemName: effectiveMode.symbolName)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-            }
-            .padding(.vertical, 2)
-
-            Divider()
-
-            ForEach(RecipeBadges.Group.allCases, id: \.self) { group in
-                ForEach(badges.items(in: group)) { item in
-                    row(
-                        icon: AnyView(RecipeBadgeIcon(item: item)),
-                        title: item.title,
-                        detail: item.detail,
-                        dimmed: item.state == .hidden
-                    )
-                }
-            }
-            row(
-                icon: AnyView(
-                    Image(systemName: effectiveMode.symbolName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                ),
-                title: "クリックしたときの動き",
-                detail: modeDetail,
-                dimmed: false
-            )
-        }
-    }
-
-    private var modeDetail: String {
-        if effectiveMode != recipe.mode {
-            return "「実行方法」は \(recipe.mode.displayName)。"
-                + "入力が足りないので \(effectiveMode.displayName) に切り替わる"
-        }
-        return "「実行方法」の \(recipe.mode.displayName)"
-    }
-
-    private func row(icon: AnyView, title: String, detail: String, dimmed: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            icon.frame(width: 16)
-            Text(title)
-                .font(.callout)
-                .frame(width: 150, alignment: .leading)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .opacity(dimmed ? 0.55 : 1)
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .medium))
+            .foregroundStyle(RecipeBadgeIcon.color(for: state))
+            .frame(width: 15)
     }
 }
